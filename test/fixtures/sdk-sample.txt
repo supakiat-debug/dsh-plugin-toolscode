@@ -1,0 +1,62 @@
+## Writing code for run_code
+
+A generated PTC SDK section, miniatured: the fixture exercises both interfaces,
+nesting, unions, quoted literals with commas, an unknown-typed MCP tool and a
+no-argument tool. Loaded by test/sdk-slim.test.mjs and test/unit.test.mjs.
+
+```ts
+type JsonValue = null | boolean | number | string
+
+interface ToolArgsMap {
+  /** Search the web with optional time filtering. */
+  advanced_search: {
+    /** The search query. */
+    query?: string;
+    engine?: "ddg" | "bing, searxng";
+  } & Record<string, JsonValue>;
+  /** Enter one cell exactly as if typed: a number, text, or a formula starting with = ("=AVERAGE(B2:B9)"). Dependent cells recalculate. */
+  mcp__gridcraft__set_cell: {
+    /** Cell, e.g. "B7" or "Sheet2!C3". */
+    cell: string;
+    input: string | number | boolean;
+  } & Record<string, JsonValue>;
+  /** Sort a range by one or more columns; keys accepts objects or bare column letters. */
+  mcp__gridcraft__sort_range: unknown;
+  /** Open a PDF and return its document id. */
+  mcp__pdfcraft__doc_open: {
+    path: string;
+  };
+  /** No parameters at all. */
+  mcp__gridcraft__workbook_list: Record<string, never>;
+  /** Tiny fixture tool for the self-heal path: one required string. */
+  mcp__fake__thing: {
+    /** A required string. */
+    a: string;
+  } & Record<string, JsonValue>;
+}
+
+interface ToolOutputMap {
+  advanced_search: {
+    provider?: string;
+  };
+  mcp__gridcraft__set_cell: {
+    content: ({ type: string; text?: string })[];
+    isError?: boolean;
+  };
+  mcp__gridcraft__sort_range: unknown;
+  mcp__pdfcraft__doc_open: {
+    kind: string;
+  };
+  mcp__gridcraft__workbook_list: {
+    kind: string;
+  };
+  mcp__fake__thing: {
+    kind: string;
+  };
+}
+
+type ToolName = keyof ToolOutputMap
+declare const tools: {
+  [K in ToolName]: (args: ToolArgsMap[K]) => Promise<ToolOutputMap[K]>;
+}
+```

@@ -1,0 +1,93 @@
+# Copy-paste shapes for the profile's own cordis.patch.yml.
+#
+# The package contributes its own row through dsh.bundle.patch (see ./cordis.patch.yml),
+# so what you write in the profile patch is a `patch` of that row — the profile patch
+# cannot insert the row itself, and a top-level `- id: toolscode` without the bundle
+# behind it fails the boot with: patch: entry "toolscode" not found.
+
+# ---------------------------------------------------------------------------
+# 1. Making the package resolvable from the profile
+# ---------------------------------------------------------------------------
+#
+#   ~/.dsh/profiles/<profile>/package.json
+#
+#     "dependencies": {
+#       "dsh-plugin-toolscode": "link:../plugins/dsh-plugin-toolscode"
+#     },
+#     "dsh": {
+#       "profile": {
+#         "bundles": ["@deepseek-ai/dsh-base", "@deepseek-ai/dsh-web-app", "dsh-plugin-toolscode"]
+#       }
+#     }
+#
+#   `dsh plugin --profile <profile> add <path>` does the link, the bundle entry and the
+#   lockfile for you. A hand-written `link:` / junction keeps the lockfile untouched:
+#
+#     cmd /c mklink /J "%USERPROFILE%\.dsh\profiles\web\node_modules\dsh-plugin-toolscode" "<path to this repo>"
+#     ln -s "<path to this repo>" "$HOME/.dsh/profiles/web/node_modules/dsh-plugin-toolscode"
+
+# ---------------------------------------------------------------------------
+# 2. Wire shrink only (native tool presentation, any preset)
+# ---------------------------------------------------------------------------
+
+# - id: toolscode
+#   name: dsh-plugin-toolscode
+#   config:
+#     minChars: 600              # only shrink schemas whose JSON is at least this long
+#     descriptionCap: 160        # measured best value
+#     nestedDescriptionCap: 80
+#     instructionsCap: 2000      # mcp:* instruction sections
+#     exclude: ["read", "write", "edit", "bash"]   # keep the core file tools fully described
+
+# ---------------------------------------------------------------------------
+# 3. PTC preset, prose caps only — the careful first step (-49% of tools:sdk)
+# ---------------------------------------------------------------------------
+
+# - id: toolscode
+#   name: dsh-plugin-toolscode
+#   config:
+#     minChars: 600
+#     descriptionCap: 160
+#     nestedDescriptionCap: 80
+#     instructionsCap: 2000
+#     sdkDescriptionCap: 160
+#     sdkTagCap: 80
+
+# ---------------------------------------------------------------------------
+# 4. PTC preset with MCP servers attached — v0.2, what is deployed here (variant I)
+#    157,616 -> 91,811 chars before the first user message (-41.8%)
+# ---------------------------------------------------------------------------
+
+# - id: toolscode
+#   name: dsh-plugin-toolscode
+#   config:
+#     minChars: 600
+#     descriptionCap: 160
+#     nestedDescriptionCap: 80
+#     instructionsCap: 2000
+#     sdkDescriptionCap: 160
+#     sdkTagCap: 80
+#     # v0.2 — the declaration layout, PTC only:
+#     sdkSlimInclude: ["mcp__*"] # collapse MCP declarations; core tools keep full entries
+#     sdkSlimStyle: table        # 'lines' keeps the nesting and only drops the prose
+#     sdkSlimDocCap: 90          # keep 90 chars of each description inline; 0 drops them
+#     sdkOutputMap: stub         # ToolOutputMap -> one index signature
+#     sdkSlimMinEntries: 8       # below this many matched entries, rewrite nothing
+#     sdkSlimRecord: true        # drop the trailing & Record<string, JsonValue>
+#     sdkSlimMarker: true        # append the 457c note about the MCP envelope + self-heal
+#     sdkSlimHeal: true          # answer an argument-shaped rejection with the real schema
+
+# ---------------------------------------------------------------------------
+# 5. Everything off, per key, for A/B measuring
+# ---------------------------------------------------------------------------
+
+# - id: toolscode
+#   name: dsh-plugin-toolscode
+#   config:
+#     enabled: false             # kill switch: mounts, changes nothing
+#     # instructionsCap: null    # keep MCP instructions verbatim
+#     # sdkDescriptionCap: null  # keep the SDK JSDoc verbatim (default)
+#     # sdkSlimInclude: []       # keep the declaration layout verbatim (default)
+#     # sdkOutputMap: keep       # keep ToolOutputMap verbatim (default)
+#     # sdkSlimMarker: false     # no explanatory note under a slimmed section
+#     # sdkSlimHeal: false       # compact table, no schema disclosure on rejection

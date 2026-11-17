@@ -1,0 +1,20 @@
+# dependencies (the harness provides cordis / dsh-tools at runtime;
+# a node_modules here is only for running the integration tests)
+node_modules/
+
+# packaging / logs
+npm-debug.log*
+yarn-error.log*
+*.log
+*.tgz
+
+# editors / OS
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# local scratch and captured prompt text (real deployments contain real paths)
+scratch/
+tmp/
+*.captured.txt

@@ -1,0 +1,12 @@
+# Normalise line endings so a Windows checkout and a Linux runner produce the same
+# blob hashes (the tests compare byte-for-byte text against fixtures).
+* text=auto
+*.js text eol=lf
+*.mjs text eol=lf
+*.json text eol=lf
+*.md text eol=lf
+*.yml text eol=lf
+*.svg text eol=lf
+*.txt text eol=lf
+*.png binary
+*.ico binary

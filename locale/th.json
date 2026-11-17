@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Toolscode — ย่อ prose ของ tool",
+    "description": "ย่อคำอธิบาย tool, MCP instructions และ JSDoc ของ SDK declarations ตอนประกอบ system prompt เพื่อให้โมเดลใช้ token น้อยลง โดย validation/dispatch ยังใช้สคีมาฉบับเต็ม และแนบสคีมาจริงกลับไปใน error เมื่อโมเดลส่ง args ผิดรูป"
+  }
+}

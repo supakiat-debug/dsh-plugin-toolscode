@@ -1,0 +1,79 @@
+{
+  "name": "dsh-plugin-toolscode",
+  "version": "0.2.0",
+  "private": true,
+  "description": "Shrink model-facing tool prose for an agent preset: wire tool schemas (descriptions/property prose), MCP server instructions, and — opt-in — the generated PTC SDK declaration section, both its JSDoc prose and (v0.2) the declaration layout of matched tools plus a stubbed ToolOutputMap, cutting prompt bytes while dispatch, validation and presentations keep using the real full definitions.",
+  "license": "MIT",
+  "author": {
+    "name": "supakiat-debug",
+    "email": "supakiat@gmail.com",
+    "url": "https://github.com/supakiat-debug"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/supakiat-debug/dsh-plugin-toolscode.git"
+  },
+  "homepage": "https://github.com/supakiat-debug/dsh-plugin-toolscode#readme",
+  "bugs": {
+    "url": "https://github.com/supakiat-debug/dsh-plugin-toolscode/issues"
+  },
+  "type": "module",
+  "main": "lib/index.js",
+  "exports": {
+    ".": "./lib/index.js",
+    "./shrink": "./lib/shrink.js",
+    "./sdk-slim": "./lib/sdk-slim.js",
+    "./locale/*.json": "./locale/*.json",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib",
+    "tools",
+    "locale",
+    "icon.svg",
+    "cordis.patch.yml",
+    "examples",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE"
+  ],
+  "keywords": [
+    "dsh",
+    "deepseek-harness",
+    "cordis",
+    "plugin",
+    "bundle",
+    "dsh-plugin",
+    "tool-schema",
+    "prompt-optimization",
+    "prompt-cache",
+    "context-window",
+    "token-cost",
+    "ptc",
+    "mcp"
+  ],
+  "engines": {
+    "node": "^22.19.0 || >=24.0.0"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": ">=4.0.1",
+    "@deepseek-ai/dsh-system-prompt": ">=0.1.0-rc.6",
+    "@deepseek-ai/dsh-tools": ">=0.1.0-rc.6"
+  },
+  "scripts": {
+    "test": "node --test test/unit.test.mjs test/sdk-slim.test.mjs",
+    "test:unit": "node --test test/sdk-slim.test.mjs",
+    "check": "npm test",
+    "measure": "node tools/measure.mjs"
+  },
+  "meta": {
+    "title": "Toolscode",
+    "description": "Shrinks the model-facing prose of tool schemas, MCP server instructions and PTC SDK declarations at prompt-assembly time, keeping the real definitions for validation and re-attaching them when the model gets an argument rejected."
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "icon": "./icon.svg"
+}

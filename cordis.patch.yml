@@ -1,0 +1,33 @@
+# Patch layer contributed by dsh-plugin-toolscode.
+#
+# Inserts one host-side row into the profile. Mounted at the profile (root) scope, the
+# plugin wraps every agent's system-prompt assembly in this profile — wire tools[],
+# `mcp:*` instruction sections and, opt-in, the JSDoc prose of the generated `tools:sdk`
+# declaration section — and leaves the tool registry, validation, dispatch and GUI cards
+# on the full definitions.
+#
+# Being a profile bundle (package.json `dsh.bundle.patch` + a row in the profile's
+# `dsh.profile.bundles`) is also what makes the plugin show up in the plugins list:
+# DSH only lists Loader entries, and rows nested inside a preset's `plugins:` list are
+# never Loader entries — they mount per agent and stay invisible to the manager.
+#
+# Configure by patching this row's config in the profile's own cordis.patch.yml:
+#
+#   - id: toolscode
+#     config:
+#       minChars: 600            # skip schemas already smaller than this
+#       descriptionCap: 160      # tool description budget
+#       nestedDescriptionCap: 80 # property description budget
+#       instructionsCap: 2000    # mcp:* instruction section budget
+#       sdkDescriptionCap: 160   # PTC only; null keeps the SDK JSDoc untouched
+#       sdkTagCap: 80
+#       sdkSlimInclude: ["mcp__*"] # PTC v0.2; [] keeps the declaration layout untouched
+#       sdkSlimDocCap: 90        # PTC v0.2; chars of each tool description kept inline
+#       sdkOutputMap: stub       # PTC v0.2; 'keep' leaves ToolOutputMap as generated
+#
+# Disable from the plugins list (writes `disabled: true` into the profile patch) or with
+# `config: { enabled: false }`. See README.md for the measured numbers.
+- insert:
+    - id: toolscode
+      name: dsh-plugin-toolscode
+      config: {}

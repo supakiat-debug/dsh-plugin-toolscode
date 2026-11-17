@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Toolscode",
+    "description": "Shrinks the model-facing prose of tool schemas, MCP server instructions and PTC SDK declarations at prompt-assembly time, keeping the real definitions for validation and re-attaching them when the model gets an argument rejected."
+  }
+}
