@@ -330,6 +330,12 @@ stub compacts it while keeping every declaration; `sdkSlimMinEntries` gates the 
 rewrite while the stub stays independent; a rejected slimmed tool is answered with the
 real contract; `sdkSlimHeal: false` stops the disclosure).
 
+The integration job pins the harness version this plugin is deployed against. The
+`latest` entry is a forward look and is allowed to fail: dsh 0.2.x wants a tool
+executor loaded in the composition, which the current test universe does not do, so
+those runs stop at `TOOL_EXECUTOR_UNAVAILABLE` — a fixture gap, not a plugin defect
+(the plugin itself never touches executors).
+
 The suite needs the `@deepseek-ai/dsh` package. It looks for it in `DSH_ROOT`, then a
 local/hoisted `node_modules`, then the npm global root. CI runs the pure suite on a Node
 matrix without any install, and the full suite against the published harness package

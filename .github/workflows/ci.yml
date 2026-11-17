@@ -33,7 +33,9 @@ jobs:
     # so a bare `npm install @deepseek-ai/dsh` asks for `*`, which never matches a
     # prerelease — install an explicit version or the `latest` dist-tag instead.
     # The pinned version is the one this plugin is deployed against; the `latest`
-    # run is a forward look and is allowed to go red without breaking the badge.
+    # run is a forward look and is allowed to go red without breaking the badge:
+    # dsh 0.2.x wants a tool executor loaded in the composition, which the test
+    # universe does not do yet (TOOL_EXECUTOR_UNAVAILABLE).
     name: integration against dsh ${{ matrix.dsh }}
     runs-on: ubuntu-latest
     continue-on-error: ${{ matrix.dsh == 'latest' }}
