@@ -28,17 +28,25 @@ jobs:
 
   harness:
     # Integration suite: mounts the plugin into a real cordis universe (real
-    # SystemPrompt, ToolRuntime, dsh-scope chains). Needs the dsh package, which
-    # is a full CLI distribution — best effort, but it is what proves the shrink
-    # fires on the production topology, so it is not allowed to be silently red.
-    name: integration tests against real cordis
+    # SystemPrompt, ToolRuntime, dsh-scope chains) on the production topology.
+    # That needs the dsh package. Note every published dsh version is a prerelease,
+    # so a bare `npm install @deepseek-ai/dsh` asks for `*`, which never matches a
+    # prerelease — install an explicit version or the `latest` dist-tag instead.
+    # The pinned version is the one this plugin is deployed against; the `latest`
+    # run is a forward look and is allowed to go red without breaking the badge.
+    name: integration against dsh ${{ matrix.dsh }}
     runs-on: ubuntu-latest
+    continue-on-error: ${{ matrix.dsh == 'latest' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        dsh: ['0.1.7-rc.2', 'latest']
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: '22.x'
       - name: Install the harness package
-        run: npm install --no-save --no-audit --no-fund @deepseek-ai/dsh
+        run: npm install --no-save --no-audit --no-fund @deepseek-ai/dsh@${{ matrix.dsh }}
       - name: Integration + pure suites
         run: npm test
