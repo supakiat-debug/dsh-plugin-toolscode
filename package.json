@@ -1,6 +1,6 @@
 {
   "name": "dsh-plugin-toolscode",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "private": true,
   "description": "Shrink model-facing tool prose for an agent preset: wire tool schemas (descriptions/property prose), MCP server instructions, and — opt-in — the generated PTC SDK declaration section, both its JSDoc prose and (v0.2) the declaration layout of matched tools plus a stubbed ToolOutputMap, cutting prompt bytes while dispatch, validation and presentations keep using the real full definitions.",
   "license": "MIT",

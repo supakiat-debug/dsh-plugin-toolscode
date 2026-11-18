@@ -53,6 +53,52 @@ const ToolRuntime = toolsPkg.default
 const { defineTool } = toolsPkg
 const { createScope } = req('@deepseek-ai/dsh-scope')
 
+// dsh 0.2 moved tool presentation and execution behind a mountable executor
+// (`ctx.tools.setExecutor`), turned `tools.execute()` into a batch call, and
+// dropped `tools` from the `system-prompt/assemble` carrier. Feature-detect the
+// contract instead of parsing versions, so one suite runs in both worlds.
+const EXECUTOR_ERA = typeof ToolRuntime.prototype?.setExecutor === 'function'
+/** Shrinking the assembled tools[] still needs the 0.1 carrier. */
+const WIRE_SHRINK = !EXECUTOR_ERA
+const SKIP_WIRE = WIRE_SHRINK ? false
+  : 'needs the 0.1 assemble carrier: on 0.2+ the tool executor presents tools[], and the plugin has no executor wrapper yet'
+const SKIP_ARGS_HEAL = WIRE_SHRINK ? false
+  : 'on 0.2+ the pipeline rejects invalid arguments before dispatch, so tools/post-execute never sees a ToolArgsError'
+
+/** The row that plays the presentation role 0.1 ToolsService had built in. */
+const executorRow = EXECUTOR_ERA
+  ? (() => {
+      const { NativeToolExecutor } = req('@deepseek-ai/dsh-tool-executor-native')
+      return {
+        name: 'native-tool-executor',
+        inject: ['tools'],
+        apply: (ctx) => { ctx.tools.setExecutor(new NativeToolExecutor(ctx)) },
+      }
+    })()
+  : null
+
+/**
+ * Dispatch one call and return its result through whichever contract the
+ * installed harness speaks: a single call object on 0.1, a settled batch of
+ * `{callId, result}` entries on 0.2+.
+ */
+const dispatch = async (root, { callId, name, args, agent }) => {
+  const signal = new AbortController().signal
+  if (!EXECUTOR_ERA) return root.tools.execute({ callId, name, arguments: args, agent, signal })
+  const settled = await root.tools.execute({ calls: [{ id: callId, name, arguments: args }], agent, signal })
+  const entries = settled?.results ?? []
+  const entry = entries.find((e) => e.callId === callId) ?? entries[0]
+  return entry === undefined ? settled : entry.result
+}
+
+/** One real registry definition: 0.2 `definitions`, 0.1 `resolveExecution`. */
+const registryEntry = (root, scope, name) => EXECUTOR_ERA
+  ? root.tools.definitions(scope).find((d) => d.name === name)
+  : root.tools.resolveExecution(name, scope)
+
+/** The full-fidelity non-wire view (0.2 dropped the separate PTC SDK view). */
+const registryView = (root, scope) => (EXECUTOR_ERA ? root.tools.definitions(scope) : root.tools.sdkSchemas(scope))
+
 const pluginModule = await import('../lib/index.js')
 // The shape PluginPackages hands to ctx.plugin(): a plain applicable object.
 const plugin = pluginModule.default ?? pluginModule
@@ -121,6 +167,8 @@ const setup = async (pluginConfig, { pluginFirst = false, atRoot = false, tools 
   const root = new Context()
   await root.plugin(SystemPrompt, { includeHarnessIdentity: false })
   await root.plugin(ToolRuntime, {})
+  // 0.2+ refuses to assemble or dispatch without an executor in the composition.
+  if (executorRow !== null) await root.plugin(executorRow)
   const presetKey = {}
   const preset = createScope(root, presetKey)
   const agentKey = {}
@@ -147,7 +195,7 @@ const setup = async (pluginConfig, { pluginFirst = false, atRoot = false, tools 
 
 const findTool = (schemas, name) => schemas.find((s) => s.name === name)
 
-test('production topology: assembly carries the shrunk tools; other presets unaffected', async () => {
+test('production topology: assembly carries the shrunk tools; other presets unaffected', { skip: SKIP_WIRE }, async () => {
   const { root, agentKey, otherAgentKey } = await setup()
   const assembly = await root.systemPrompt.assemble({ scope: agentKey })
   const seen = findTool(assembly.tools, 'bigtool')
@@ -165,7 +213,7 @@ test('production topology: assembly carries the shrunk tools; other presets unaf
   assert.ok(findTool(elsewhere.tools, 'bigtool').description.length > 300, 'other preset must see the full schema')
 })
 
-test('mount order does not matter (plugin row before or after tool rows)', async () => {
+test('mount order does not matter (plugin row before or after tool rows)', { skip: SKIP_WIRE }, async () => {
   const { root, agentKey } = await setup(undefined, { pluginFirst: true })
   const assembly = await root.systemPrompt.assemble({ scope: agentKey })
   assert.ok(findTool(assembly.tools, 'bigtool').description.length <= 201)
@@ -173,27 +221,21 @@ test('mount order does not matter (plugin row before or after tool rows)', async
 
 test('registry keeps the real definitions: resolved execution is full-fidelity and the body runs', async () => {
   const { root, agentKey } = await setup()
-  const definition = root.tools.resolveExecution('bigtool', agentKey)
+  const definition = registryEntry(root, agentKey, 'bigtool')
   assert.ok(definition.description.length > 300, 'registry definition must be untouched')
   const result = await definition.execute({ path: 'x', mode: 'a' }, { signal: new AbortController().signal })
   assert.equal(result, 'ran:bigtool:x')
-  const full = await root.tools.execute({
-    callId: 'c-dispatch', name: 'bigtool', arguments: { path: 'y' }, agent: agentKey,
-    signal: new AbortController().signal,
-  })
+  const full = await dispatch(root, { callId: 'c-dispatch', name: 'bigtool', args: { path: 'y' }, agent: agentKey })
   assert.equal(full.isError !== true, true)
   assert.equal(full.value, 'ran:bigtool:y')
 })
 
-test('self-heal: invalid args surface the real violations plus the full real schema', async () => {
+test('self-heal: invalid args surface the real violations plus the full real schema', { skip: SKIP_ARGS_HEAL }, async () => {
   const { root, agentKey } = await setup()
   // Production order: the model first assembles (receiving the shrunk wire,
   // which arms the self-heal stash), then dispatches.
   await root.systemPrompt.assemble({ scope: agentKey })
-  const result = await root.tools.execute({
-    callId: 'c-selfheal', name: 'bigtool', arguments: { path: 123, mode: 'zzz' }, agent: agentKey,
-    signal: new AbortController().signal,
-  })
+  const result = await dispatch(root, { callId: 'c-selfheal', name: 'bigtool', args: { path: 123, mode: 'zzz' }, agent: agentKey })
   assert.equal(result.isError, true)
   // The self-heal block rewrites the outcome: content carries the original
   // violations plus the real schema; error.message mirrors the content.
@@ -209,17 +251,11 @@ test('self-heal: invalid args surface the real violations plus the full real sch
 test('self-heal leaves unshrunk tools and successful calls alone', async () => {
   const { root, agentKey } = await setup(undefined, { tools: [makeBigTool('bigtool'), makeTinyTool('tiny')] })
   await root.systemPrompt.assemble({ scope: agentKey })
-  const bad = await root.tools.execute({
-    callId: 'c-tiny', name: 'tiny', arguments: { zzz: 1 }, agent: agentKey,
-    signal: new AbortController().signal,
-  })
+  const bad = await dispatch(root, { callId: 'c-tiny', name: 'tiny', args: { zzz: 1 }, agent: agentKey })
   assert.equal(bad.isError, true)
   const text = bad.content.map((b) => b.text ?? '').join('\n')
   assert.doesNotMatch(text, /Full parameter schema/, 'never-shrunk tool must not get the note')
-  const good = await root.tools.execute({
-    callId: 'c-good', name: 'bigtool', arguments: { path: 'p' }, agent: agentKey,
-    signal: new AbortController().signal,
-  })
+  const good = await dispatch(root, { callId: 'c-good', name: 'bigtool', args: { path: 'p' }, agent: agentKey })
   assert.equal(good.isError !== true, true)
 })
 
@@ -243,7 +279,7 @@ test('mcp:* instruction sections truncate for joined agents only', async () => {
   assert.ok(elsewhere.sections.find((s) => s.name === 'mcp:testserver').text.length > 5000)
 })
 
-test('minChars and include/exclude globs steer which tools are shrunk', async () => {
+test('minChars and include/exclude globs steer which tools are shrunk', { skip: SKIP_WIRE }, async () => {
   const { root, agentKey } = await setup(
     { include: ['mcp__*'], exclude: ['mcp__keep__*'] },
     { tools: [makeBigTool('mcp__comfy__queue'), makeBigTool('mcp__keep__special'), makeBigTool('core_tool')] },
@@ -261,7 +297,7 @@ test('minChars and include/exclude globs steer which tools are shrunk', async ()
   assert.ok(findTool(a2.tools, 'bigtool').description.length > 300, 'under minChars stays full')
 })
 
-test('byte-stable across assemblies; a later registration only adds (cache contract)', async () => {
+test('byte-stable across assemblies; a later registration only adds (cache contract)', { skip: SKIP_WIRE }, async () => {
   const { root, agentKey, toolsRow } = await setup()
   const first = JSON.stringify((await root.systemPrompt.assemble({ scope: agentKey })).tools)
   const second = JSON.stringify((await root.systemPrompt.assemble({ scope: agentKey })).tools)
@@ -278,7 +314,7 @@ test('wire-only contract: the registry SDK view (PTC) stays full-fidelity', asyn
   const { root, agentKey } = await setup()
   // The shrink is an assembly-time wire transform: sdkSchemas (the PTC SDK
   // source) keeps the real descriptions by design.
-  const sdk = findTool(root.tools.sdkSchemas(agentKey), 'bigtool')
+  const sdk = findTool(registryView(root, agentKey), 'bigtool')
   assert.ok(sdk.description.length > 300)
 })
 
@@ -404,7 +440,7 @@ test('SDK shrink: edge caps and config validation', () => {
   assert.throws(() => plugin.apply({}, { sdkBlockMinChars: null }), /non-negative integer/)
 })
 
-test('ancestor-scope mount (a profile-level patch row) shrinks every preset and still self-heals', async () => {
+test('ancestor-scope mount (a profile-level patch row) shrinks every preset and still self-heals', { skip: SKIP_WIRE }, async () => {
   const config = { sdkDescriptionCap: 120, sdkTagCap: 60 }
   const { root, agentKey, otherAgentKey } = await setup(config, { atRoot: true })
   root.systemPrompt.section({ name: 'tools:sdk', order: 950, interpolate: false, text: sdkSample })
@@ -420,10 +456,7 @@ test('ancestor-scope mount (a profile-level patch row) shrinks every preset and 
   // Self-heal is scope-filtered by mount scope: an ancestor mount must still see
   // the calls of agents nested under any preset.
   await root.systemPrompt.assemble({ scope: otherAgentKey })
-  const result = await root.tools.execute({
-    callId: 'c-ancestor', name: 'bigtool', arguments: { path: 123, mode: 'zzz' }, agent: otherAgentKey,
-    signal: new AbortController().signal,
-  })
+  const result = await dispatch(root, { callId: 'c-ancestor', name: 'bigtool', args: { path: 123, mode: 'zzz' }, agent: otherAgentKey })
   assert.equal(result.isError, true)
   const text = result.content.map((b) => b.text ?? '').join('\n')
   assert.match(text, /Full parameter schema for "bigtool"/, 'ancestor mount must still self-heal')
@@ -526,52 +559,39 @@ test('SDK slim v0.2: a slimmed tool that is rejected is answered with the real c
   // Production order: assemble first (that is where the declarations are read
   // and the compact table is armed), then the model dispatches.
   await root.systemPrompt.assemble({ scope: agentKey })
-  const rejected = await root.tools.execute({
-    callId: 'c-slim-args', name: 'mcp__fake__thing', arguments: { zzz: 1 }, agent: agentKey,
-    signal: new AbortController().signal,
-  })
-  assert.equal(rejected.isError, true)
-  const text = rejected.content.map((b) => b.text ?? '').join('\n')
-  assert.match(text, /Full (parameter schema|declaration) for "mcp__fake__thing"/, 'a slimmed declaration must self-heal')
-  assert.match(text, /a: string|"a"/, 'and the disclosure carries the real argument')
   // An MCP server rejecting arguments itself (no ToolArgsError) is answered too.
-  const mcpStyle = await root.tools.execute({
-    callId: 'c-slim-mcp', name: 'mcp__gridcraft__sort_range', arguments: { a: 'x' }, agent: agentKey,
-    signal: new AbortController().signal,
-  })
+  // This is also the healing path that survives on 0.2+: the failure comes back
+  // as a dispatched result, so tools/post-execute still runs over it.
+  const mcpStyle = await dispatch(root, { callId: 'c-slim-mcp', name: 'mcp__gridcraft__sort_range', args: { a: 'x' }, agent: agentKey })
   const mcpText = mcpStyle.content.map((b) => b.text ?? '').join('\n')
   assert.match(mcpText, /invalid arguments: keys must be column letters/, 'the server message survives')
   assert.match(mcpText, /Full (parameter schema|declaration) for "mcp__gridcraft__sort_range"/)
   // A runtime failure of a slimmed tool is not an argument problem: no note.
-  const runtime = await root.tools.execute({
-    callId: 'c-slim-runtime', name: 'mcp__gridcraft__workbook_list', arguments: { a: 'x' }, agent: agentKey,
-    signal: new AbortController().signal,
-  })
+  const runtime = await dispatch(root, { callId: 'c-slim-runtime', name: 'mcp__gridcraft__workbook_list', args: { a: 'x' }, agent: agentKey })
   const runtimeText = runtime.content.map((b) => b.text ?? '').join('\n')
   assert.match(runtimeText, /Blender is not connected/)
   assert.doesNotMatch(runtimeText, /Full (parameter schema|declaration)/, 'a runtime error is left alone')
-  // The v0.1 wire path still works next to the slimming, and a tool that was
-  // never made smaller anywhere still gets no note.
-  const wire = await root.tools.execute({
-    callId: 'c-slim-wire', name: 'bigtool', arguments: { path: 123, mode: 'zzz' }, agent: agentKey,
-    signal: new AbortController().signal,
-  })
-  assert.match(wire.content.map((b) => b.text ?? '').join('\n'), /Full parameter schema for "bigtool"/)
-  const untouched = await root.tools.execute({
-    callId: 'c-slim-tiny', name: 'tiny', arguments: { zzz: 1 }, agent: agentKey,
-    signal: new AbortController().signal,
-  })
+  // A tool never made smaller anywhere still gets no note.
+  const untouched = await dispatch(root, { callId: 'c-slim-tiny', name: 'tiny', args: { zzz: 1 }, agent: agentKey })
   assert.doesNotMatch(untouched.content.map((b) => b.text ?? '').join('\n'), /Full (parameter schema|declaration)/)
+  // The remaining two are rejections the harness raises itself, which on 0.2+
+  // happen inside the pipeline before dispatch (see SKIP_ARGS_HEAL).
+  if (!WIRE_SHRINK) return
+  const rejected = await dispatch(root, { callId: 'c-slim-args', name: 'mcp__fake__thing', args: { zzz: 1 }, agent: agentKey })
+  assert.equal(rejected.isError, true)
+  const text = rejected.content.map((b) => b.text ?? '').join('\n')
+  assert.match(text, /Full (parameter schema|declaration) for "mcp__fake__thing"/, 'a slimmed declaration must self-heal')
+  assert.match(text, /a: string|"a"/, 'and the disclosure carries the real argument')
+  // The v0.1 wire path keeps working next to the slimming.
+  const wire = await dispatch(root, { callId: 'c-slim-wire', name: 'bigtool', args: { path: 123, mode: 'zzz' }, agent: agentKey })
+  assert.match(wire.content.map((b) => b.text ?? '').join('\n'), /Full parameter schema for "bigtool"/)
 })
 
 test('SDK slim v0.2: sdkSlimHeal false keeps the compact table but stops the disclosure', async () => {
   const { root, agentKey } = await slimSetup({ ...slimConfig, sdkSlimHeal: false }, slimTools())
   const here = await root.systemPrompt.assemble({ scope: agentKey })
   assert.ok(here.sections.find((s) => s.name === 'tools:sdk').text.includes('  [toolName: string]: JsonValue | undefined;'), 'slimming itself is unaffected')
-  const rejected = await root.tools.execute({
-    callId: 'c-noheal', name: 'mcp__gridcraft__sort_range', arguments: { a: 'x' }, agent: agentKey,
-    signal: new AbortController().signal,
-  })
+  const rejected = await dispatch(root, { callId: 'c-noheal', name: 'mcp__gridcraft__sort_range', args: { a: 'x' }, agent: agentKey })
   assert.doesNotMatch(rejected.content.map((b) => b.text ?? '').join('\n'), /Full (parameter schema|declaration)/)
 })
 

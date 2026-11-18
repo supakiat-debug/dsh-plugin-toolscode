@@ -4,6 +4,39 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.1] - 2026-11-18
+
+A compatibility fix for dsh 0.2.x, driven by the `latest` entry of the CI matrix going red.
+
+### Fixed
+
+- The assembly shrink pass no longer aborts when the `system-prompt/assemble` carrier has no
+  `tools` array. dsh 0.2 moved tool presentation into a mountable tool executor
+  (`ctx.tools.setExecutor`; `tools.mode` became `z.never()`), so the array is gone from the
+  carrier and `result.tools.map` threw — the catch swallowed it and the section work was lost
+  with it. `tools[]` is now handled only when present, so on 0.2+ the `mcp:*` instruction
+  truncation, the SDK prose caps and the whole declaration slim keep shrinking (the bigger
+  half of the win), and self-heal of a slimmed tool rejected by a server still fires.
+
+### Changed
+
+- The integration suite speaks both harness contracts. It feature-detects
+  `ToolRuntime.prototype.setExecutor`, mounts `@deepseek-ai/dsh-tool-executor-native` when
+  the harness refuses to assemble without one, dispatches through the batch form of
+  `tools.execute()` (`{calls: [{id, name, arguments}]}` returning `{results: [{callId, result}]}`),
+  and reads the registry through `definitions()` instead of the removed
+  `resolveExecution()` / `sdkSchemas()`. Six tests that assert the moved mechanisms skip with an
+  explicit reason instead of failing: the wire `tools[]` shrink (needs an executor wrapper)
+  and the harness-side `ToolArgsError` rescue (0.2 validates inside the pipeline, before
+  dispatch, so `tools/post-execute` never sees it).
+- `.github/workflows/ci.yml`: the `latest` harness run is a hard gate again
+  (`continue-on-error` removed) now that both matrix entries pass.
+
+### Known gap
+
+- On dsh >= 0.2 the wire shrink is inert until the plugin can wrap the executor. Documented
+  in README Limitations; the section-shaped features above are what the deployed win depends on.
+
 ## [0.2.0] - 2026-11-13
 
 The release that matters once MCP servers are attached: the **declarations** themselves,

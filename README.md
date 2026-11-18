@@ -247,6 +247,11 @@ Four public-API mechanisms. No core patches, **no registry mutation**.
    because of this). The assembly is the one place every visible tool passes through,
    whatever its origin.
 
+    On dsh >= 0.2 this first mechanism has nothing to work on: presentation moved out of
+    `ToolsService` into a mountable tool executor, so `tools[]` never enters this carrier.
+    The section work below keeps running, and it is the bigger half of the win — see
+    [Limitations](#limitations) for the exact split.
+
 2. **Section shrink.** In the same waterfall `mcp:*` sections are truncated to
    `instructionsCap`, and — when `sdkDescriptionCap` is set — the `tools:sdk` section goes
    through `shrinkSdkSection`, which rewrites every JSDoc block longer than
@@ -330,11 +335,14 @@ stub compacts it while keeping every declaration; `sdkSlimMinEntries` gates the 
 rewrite while the stub stays independent; a rejected slimmed tool is answered with the
 real contract; `sdkSlimHeal: false` stops the disclosure).
 
-The integration job pins the harness version this plugin is deployed against. The
-`latest` entry is a forward look and is allowed to fail: dsh 0.2.x wants a tool
-executor loaded in the composition, which the current test universe does not do, so
-those runs stop at `TOOL_EXECUTOR_UNAVAILABLE` — a fixture gap, not a plugin defect
-(the plugin itself never touches executors).
+The integration job runs the suite twice: against the pinned harness version this plugin
+is deployed against, and against the `latest` dist-tag. Both are hard gates. dsh 0.2 moved
+tool presentation and execution behind a mountable executor, so the suite feature-detects
+the contract (`tools.setExecutor`), mounts `@deepseek-ai/dsh-tool-executor-native` when the
+harness demands one, dispatches through the batch form of `tools.execute()`, reads the
+registry through whichever accessor exists, and skips the six tests whose subject the new
+contract moved out of reach — the skip reason is printed in the TAP output, so a green
+`latest` run still says what it did not check.
 
 The suite needs the `@deepseek-ai/dsh` package. It looks for it in `DSH_ROOT`, then a
 local/hoisted `node_modules`, then the npm global root. CI runs the pure suite on a Node
@@ -343,6 +351,16 @@ matrix without any install, and the full suite against the published harness pac
 
 ## Limitations
 
+- On dsh >= 0.2 the wire `tools[]` shrink is inert. 0.2 deleted the built-in presentation
+  (`tools.mode` is `z.never()`) and gave `describe()` to the tool executor, so the schemas
+  never pass through `system-prompt/assemble` — there is nothing left for a post-order
+  listener to map. Restoring it means wrapping the executor (`describe` shrinks what the
+  inner one returns, `execute` delegates), which this plugin does not do yet. Everything
+  section-shaped is unaffected and is where the measured win lives: `mcp:*` instructions,
+  SDK prose, the declaration slim, and self-heal of a slimmed tool that a server rejected.
+  Argument rejections raised by the harness itself also moved inside the pipeline, ahead of
+  dispatch, so on 0.2+ the `ToolArgsError` rescue only covers rejections that come back as
+  tool results — which is what an MCP server does anyway.
 - The shrink is lossy by design: a model that needs a dropped nuance learns it through the
   self-heal round-trip instead of paying for it on every step.
 - `run_code` is never shrunk (its contract is what the model writes code against), so in
@@ -397,8 +415,11 @@ plugin is safe to point at a 333-tool prompt.
 ## Requirements
 
 - Node `^22.19.0 || >=24.0.0` (and >= 22.15 for `tools/measure.mjs`).
-- A DSH profile with cordis >= 4.0.1. The wire and instruction shrinks work on any preset;
-  the `sdk*` keys only apply to presets that present tools as a generated SDK (PTC mode).
+- A DSH profile with cordis >= 4.0.1. CI runs the integration suite against the pinned
+  0.1.7-rc.2 install and against `latest` (0.2.2-rc.1 at the time of writing); see
+  [Limitations](#limitations) for what the 0.2 executor contract changes. The wire and
+  instruction shrinks work on any preset; the `sdk*` keys only apply to presets that present
+  tools as a generated SDK (PTC mode).
 
 ## License
 
