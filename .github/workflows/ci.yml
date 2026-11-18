@@ -33,10 +33,11 @@ jobs:
     # so a bare `npm install @deepseek-ai/dsh` asks for `*`, which never matches a
     # prerelease — install an explicit version or the `latest` dist-tag instead.
     # The pinned version is the one this plugin is deployed against; `latest` is the
-    # forward look, and both are hard gates. The suite adapts to the harness it is given:
-    # dsh 0.2 needs a tool executor mounted before anything assembles or dispatches, so the
-    # test universe mounts dsh-tool-executor-native there and skips, with a printed reason,
-    # the handful of tests whose subject 0.2 moved behind that executor.
+    # forward look, and both are hard gates. One suite covers both harness contracts: 0.1
+    # presents tools[] through the assembly carrier, 0.2 through a mountable executor, so the
+    # universe feature-detects the contract, mounts dsh-tool-executor-native when the harness
+    # demands one and runs the plugin with executor: wrap. Only the three cases that exist to
+    # pin the executor contract skip, and only on 0.1.
     name: integration against dsh ${{ matrix.dsh }}
     runs-on: ubuntu-latest
     strategy:

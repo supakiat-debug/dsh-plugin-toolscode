@@ -1,8 +1,8 @@
 {
   "name": "dsh-plugin-toolscode",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "private": true,
-  "description": "Shrink model-facing tool prose for an agent preset: wire tool schemas (descriptions/property prose), MCP server instructions, and — opt-in — the generated PTC SDK declaration section, both its JSDoc prose and (v0.2) the declaration layout of matched tools plus a stubbed ToolOutputMap, cutting prompt bytes while dispatch, validation and presentations keep using the real full definitions.",
+  "description": "Shrink model-facing tool prose for an agent preset: wire tool schemas (descriptions/property prose), MCP server instructions, and — opt-in — the generated PTC SDK declaration section, both its JSDoc prose and (v0.2) the declaration layout of matched tools plus a stubbed ToolOutputMap, cutting prompt bytes while dispatch, validation and presentations keep using the real full definitions. From dsh 0.2 the wire shrink mounts as a wrapper around the tool executor that presents tools[] there.",
   "license": "MIT",
   "author": {
     "name": "supakiat-debug",

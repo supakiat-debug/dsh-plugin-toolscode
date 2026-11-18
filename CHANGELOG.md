@@ -4,6 +4,51 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2026-11-18
+
+Full support for the dsh 0.2 tool-executor contract: the wire shrink is back.
+
+### Added
+
+- `executor` config key (`off` default, `wrap`). From dsh 0.2 the tool executor — not the
+  assembly waterfall — presents `tools[]`, so the plugin now registers a wrapper over the
+  executor the mount scope selects: `describe()` runs the same `shrinkToolSchema` pass over
+  what the inner executor returns, `execute()` delegates untouched, and the self-heal stash
+  is armed from there instead of from the assembly. The wrapper owns no prompt sections,
+  which is what makes shadowing safe to reason about — and why it refuses to shadow an
+  executor that does own sections.
+- Every refusal is a warning naming the executor and the reason, never a throw: no executor
+  contract on this harness, no executor in the composition, an executor presenting its own
+  sections (a PTC one), a scope already carrying a wrapper, a `setExecutor` that rejects the
+  scope. A plugin that throws at mount takes the whole agent down with it.
+- The wrapper announces itself once per scope at mount; the shrink summary now shares one
+  `percentCut()` helper and stays silent when nothing was shrunk.
+
+### Fixed
+
+- **Correction to the 0.2.1 note below:** `tools/post-execute` *does* see a harness-raised
+  `ToolArgsError` on dsh 0.2. That claim came from a self-heal case that failed for another
+  reason — on 0.2 nothing shrank, so the real-schema stash stayed empty and the listener had
+  nothing to attach. Verified against 0.2.2-rc.1: the normalized rejection arrives with
+  `isError: true`, `error.info.name === 'ToolArgsError'` and the original call arguments, so
+  the rescue works exactly as on 0.1 once `describe()` arms the stash.
+- The assembly log no longer reports "shrunk 0 tool schemas" on a 0.2 mount, where the wire
+  is handled by the executor.
+
+### Changed
+
+- The integration suite runs with **zero skips on dsh 0.2** (28 tests; only the three
+  executor-contract cases skip on 0.1). The test universe grows a profile layer between the
+  root and the presets, so the ancestor-mount tests keep their meaning while the executor
+  stays at the root — the topology a real profile-level patch mounts into.
+- New coverage: the wrapper shrinks the presented schemas while the registry stays full
+  (`parameters` are projected by reference, so a wrapper must never mutate what it returns);
+  `describe()` is byte-stable across assemblies; a fake section-owning executor is declined
+  and its `tools:sdk` text still renders; a missing executor and a second row in one scope
+  are survived; `executor` values are validated.
+- README: a "The executor contract (dsh 0.2)" section, the `executor` key in the config
+  reference, and the Limitations / Tests / Requirements wording rewritten around it.
+
 ## [0.2.1] - 2026-11-18
 
 A compatibility fix for dsh 0.2.x, driven by the `latest` entry of the CI matrix going red.
@@ -36,6 +81,9 @@ A compatibility fix for dsh 0.2.x, driven by the `latest` entry of the CI matrix
 
 - On dsh >= 0.2 the wire shrink is inert until the plugin can wrap the executor. Documented
   in README Limitations; the section-shaped features above are what the deployed win depends on.
+  (Closed in 0.3.0 by `executor: wrap`. Two claims in this release — this gap being permanent
+  for the time being, and post-execute never seeing a harness-side `ToolArgsError` — were
+  wrong; see the correction under 0.3.0.)
 
 ## [0.2.0] - 2026-11-13
 

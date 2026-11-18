@@ -11,6 +11,13 @@
  * every scenario here registers through a preset-scoped plugin row
  * (`registrar`), exactly like the preset's `tool-*` rows do.
  *
+ * Two harness contracts are covered by ONE suite, feature-detected rather
+ * than version-parsed: up to dsh 0.1 ToolsService presents tools[] itself and
+ * the assemble waterfall carries the array, while from dsh 0.2 presentation
+ * and dispatch live in a mountable tool executor (the native one is mounted
+ * into the test universe, and the plugin runs with executor: wrap so it
+ * shrinks through that executor). Every wire assertion runs in both worlds.
+ *
  * Module resolution: the dsh packages live in the installed dsh bundle, not
  * in this package's tree, so imports are anchored with createRequire at the
  * dsh install (override with DSH_ROOT).
@@ -58,24 +65,26 @@ const { createScope } = req('@deepseek-ai/dsh-scope')
 // dropped `tools` from the `system-prompt/assemble` carrier. Feature-detect the
 // contract instead of parsing versions, so one suite runs in both worlds.
 const EXECUTOR_ERA = typeof ToolRuntime.prototype?.setExecutor === 'function'
-/** Shrinking the assembled tools[] still needs the 0.1 carrier. */
-const WIRE_SHRINK = !EXECUTOR_ERA
-const SKIP_WIRE = WIRE_SHRINK ? false
-  : 'needs the 0.1 assemble carrier: on 0.2+ the tool executor presents tools[], and the plugin has no executor wrapper yet'
-const SKIP_ARGS_HEAL = WIRE_SHRINK ? false
-  : 'on 0.2+ the pipeline rejects invalid arguments before dispatch, so tools/post-execute never sees a ToolArgsError'
+/**
+ * On 0.2+ the executor is what presents tools[], so the wire shrink goes
+ * through it: the same assertions hold in both worlds, one via the assemble
+ * carrier and one via the describe() of the wrapper the plugin mounts.
+ */
+const PLUGIN_BASE = EXECUTOR_ERA ? { executor: 'wrap' } : {}
+/** Gate for tests that need the 0.2 executor contract to exist at all. */
+const ONLY_EXECUTOR_ERA = { skip: EXECUTOR_ERA ? false : 'the tool executor contract does not exist before dsh 0.2' }
 
-/** The row that plays the presentation role 0.1 ToolsService had built in. */
-const executorRow = EXECUTOR_ERA
-  ? (() => {
-      const { NativeToolExecutor } = req('@deepseek-ai/dsh-tool-executor-native')
-      return {
-        name: 'native-tool-executor',
-        inject: ['tools'],
-        apply: (ctx) => { ctx.tools.setExecutor(new NativeToolExecutor(ctx)) },
-      }
-    })()
-  : null
+/**
+ * The row that plays the presentation role 0.1 ToolsService had built in, as
+ * a builder so each universe gets its own instance - and with it its own
+ * execution pipeline and post-execute waterfall.
+ * @param ctx - context to select the executor on.
+ */
+const mountNative = (ctx) => {
+  const { NativeToolExecutor } = req('@deepseek-ai/dsh-tool-executor-native')
+  ctx.tools.setExecutor(new NativeToolExecutor(ctx))
+}
+const nativeRow = EXECUTOR_ERA ? { name: 'native-tool-executor', inject: ['tools'], apply: mountNative } : null
 
 /**
  * Dispatch one call and return its result through whichever contract the
@@ -158,44 +167,63 @@ const registrar = (...definitions) => {
 /**
  * Build root + a plugin-bearing preset + a second preset without the
  * plugin, each with its own registered tools, mirroring the deployment.
+ * Both presets hang under a shared profile scope, so a row can mount at
+ * three depths: inside the preset (the usual case), on that ancestor (a
+ * profile row from cordis.patch.yml), or nowhere (a null config). On dsh
+ * 0.2+ a tool executor is mounted at the root - the deployment default -
+ * which is exactly the executor an ancestor or preset mount gets to wrap.
  * @param pluginConfig - config for the toolscode row (null skips the row).
- * @param options - `{ pluginFirst, atRoot, tools, otherTools }`: mount-order control,
- *   and `atRoot` mounts the plugin at the ancestor (profile-level) scope instead of
- *   inside the preset — the topology a profile row from cordis.patch.yml produces.
+ * @param options - topology and mount order: `atRoot` mounts the plugin on
+ *   the ancestor scope, `withExecutor: false` leaves the executor out of
+ *   the composition, `executorOverride` mounts a different row (a stand-in
+ *   for the PTC executor). `tools` / `otherTools` are the registrations.
  */
-const setup = async (pluginConfig, { pluginFirst = false, atRoot = false, tools = [makeBigTool('bigtool')], otherTools = [makeBigTool('bigtool')] } = {}) => {
+const setup = async (pluginConfig, {
+  pluginFirst = false,
+  atRoot = false,
+  withExecutor = true,
+  executorOverride,
+  tools = [makeBigTool('bigtool')],
+  otherTools = [makeBigTool('bigtool')],
+} = {}) => {
   const root = new Context()
   await root.plugin(SystemPrompt, { includeHarnessIdentity: false })
   await root.plugin(ToolRuntime, {})
-  // 0.2+ refuses to assemble or dispatch without an executor in the composition.
-  if (executorRow !== null) await root.plugin(executorRow)
+  // 0.2+ refuses to assemble or dispatch without an executor in the universe.
+  const row = executorOverride === undefined ? nativeRow : executorOverride
+  if (row !== null && withExecutor) await root.plugin(row)
+  // The shared ancestor a profile-level patch row mounts on.
+  const profileKey = {}
+  const profile = createScope(root, profileKey)
   const presetKey = {}
-  const preset = createScope(root, presetKey)
+  const preset = createScope(root, presetKey, { parent: profileKey })
   const agentKey = {}
   createScope(root, agentKey, { parent: presetKey })
   const otherKey = {}
-  const other = createScope(root, otherKey)
+  const other = createScope(root, otherKey, { parent: profileKey })
   const otherAgentKey = {}
   createScope(root, otherAgentKey, { parent: otherKey })
   const toolsRow = registrar(...tools)
   const otherRow = registrar(...otherTools)
-  // atRoot mirrors a profile-level cordis.patch.yml row: the plugin mounts on the
-  // ancestor scope, while tools stay registered in the preset's own layer.
-  const mountScope = atRoot ? root : preset.ctx
+  // atRoot mirrors a profile-level cordis.patch.yml row: the plugin mounts on
+  // the ancestor scope, while tools stay registered in the preset own layer.
+  const mountScope = atRoot ? profile.ctx : preset.ctx
+  // executor: wrap is what lets the 0.2 contract shrink the wire at all.
+  const config = pluginConfig === null ? null : { ...PLUGIN_BASE, ...pluginConfig }
   if (pluginFirst) {
-    if (pluginConfig !== null) await mountScope.plugin(plugin, pluginConfig ?? {})
+    if (config !== null) await mountScope.plugin(plugin, config)
   }
   await preset.ctx.plugin(toolsRow)
   if (!pluginFirst) {
-    if (pluginConfig !== null) await mountScope.plugin(plugin, pluginConfig ?? {})
+    if (config !== null) await mountScope.plugin(plugin, config)
   }
   await other.ctx.plugin(otherRow)
-  return { root, preset, agentKey, other, otherAgentKey, toolsRow }
+  return { root, profile, preset, agentKey, other, otherAgentKey, toolsRow }
 }
 
 const findTool = (schemas, name) => schemas.find((s) => s.name === name)
 
-test('production topology: assembly carries the shrunk tools; other presets unaffected', { skip: SKIP_WIRE }, async () => {
+test('production topology: assembly carries the shrunk tools; other presets unaffected', async () => {
   const { root, agentKey, otherAgentKey } = await setup()
   const assembly = await root.systemPrompt.assemble({ scope: agentKey })
   const seen = findTool(assembly.tools, 'bigtool')
@@ -213,7 +241,7 @@ test('production topology: assembly carries the shrunk tools; other presets unaf
   assert.ok(findTool(elsewhere.tools, 'bigtool').description.length > 300, 'other preset must see the full schema')
 })
 
-test('mount order does not matter (plugin row before or after tool rows)', { skip: SKIP_WIRE }, async () => {
+test('mount order does not matter (plugin row before or after tool rows)', async () => {
   const { root, agentKey } = await setup(undefined, { pluginFirst: true })
   const assembly = await root.systemPrompt.assemble({ scope: agentKey })
   assert.ok(findTool(assembly.tools, 'bigtool').description.length <= 201)
@@ -230,7 +258,7 @@ test('registry keeps the real definitions: resolved execution is full-fidelity a
   assert.equal(full.value, 'ran:bigtool:y')
 })
 
-test('self-heal: invalid args surface the real violations plus the full real schema', { skip: SKIP_ARGS_HEAL }, async () => {
+test('self-heal: invalid args surface the real violations plus the full real schema', async () => {
   const { root, agentKey } = await setup()
   // Production order: the model first assembles (receiving the shrunk wire,
   // which arms the self-heal stash), then dispatches.
@@ -279,7 +307,7 @@ test('mcp:* instruction sections truncate for joined agents only', async () => {
   assert.ok(elsewhere.sections.find((s) => s.name === 'mcp:testserver').text.length > 5000)
 })
 
-test('minChars and include/exclude globs steer which tools are shrunk', { skip: SKIP_WIRE }, async () => {
+test('minChars and include/exclude globs steer which tools are shrunk', async () => {
   const { root, agentKey } = await setup(
     { include: ['mcp__*'], exclude: ['mcp__keep__*'] },
     { tools: [makeBigTool('mcp__comfy__queue'), makeBigTool('mcp__keep__special'), makeBigTool('core_tool')] },
@@ -297,7 +325,7 @@ test('minChars and include/exclude globs steer which tools are shrunk', { skip: 
   assert.ok(findTool(a2.tools, 'bigtool').description.length > 300, 'under minChars stays full')
 })
 
-test('byte-stable across assemblies; a later registration only adds (cache contract)', { skip: SKIP_WIRE }, async () => {
+test('byte-stable across assemblies; a later registration only adds (cache contract)', async () => {
   const { root, agentKey, toolsRow } = await setup()
   const first = JSON.stringify((await root.systemPrompt.assemble({ scope: agentKey })).tools)
   const second = JSON.stringify((await root.systemPrompt.assemble({ scope: agentKey })).tools)
@@ -323,6 +351,7 @@ test('config validation rejects nonsense early', () => {
   assert.throws(() => plugin.apply({}, { descriptionCap: -5 }), /non-negative integer/)
   assert.throws(() => plugin.apply({}, { include: 'mcp__*' }), /array of glob strings/)
   assert.throws(() => plugin.apply({}, { instructionsCap: 1.5 }), /non-negative integer or null/)
+  assert.throws(() => plugin.apply({}, { executor: 'on' }), /executor must be "off" or "wrap"/)
 })
 
 test('disabled config is a no-op', async () => {
@@ -440,7 +469,7 @@ test('SDK shrink: edge caps and config validation', () => {
   assert.throws(() => plugin.apply({}, { sdkBlockMinChars: null }), /non-negative integer/)
 })
 
-test('ancestor-scope mount (a profile-level patch row) shrinks every preset and still self-heals', { skip: SKIP_WIRE }, async () => {
+test('ancestor-scope mount (a profile-level patch row) shrinks every preset and still self-heals', async () => {
   const config = { sdkDescriptionCap: 120, sdkTagCap: 60 }
   const { root, agentKey, otherAgentKey } = await setup(config, { atRoot: true })
   root.systemPrompt.section({ name: 'tools:sdk', order: 950, interpolate: false, text: sdkSample })
@@ -574,9 +603,9 @@ test('SDK slim v0.2: a slimmed tool that is rejected is answered with the real c
   // A tool never made smaller anywhere still gets no note.
   const untouched = await dispatch(root, { callId: 'c-slim-tiny', name: 'tiny', args: { zzz: 1 }, agent: agentKey })
   assert.doesNotMatch(untouched.content.map((b) => b.text ?? '').join('\n'), /Full (parameter schema|declaration)/)
-  // The remaining two are rejections the harness raises itself, which on 0.2+
-  // happen inside the pipeline before dispatch (see SKIP_ARGS_HEAL).
-  if (!WIRE_SHRINK) return
+  // And the two the harness rejects itself: on 0.1 that surfaces through the
+  // dispatch waterfall, on 0.2 inside the pipeline - tools/post-execute sees
+  // the normalized ToolArgsError either way, armed by whichever path shrank.
   const rejected = await dispatch(root, { callId: 'c-slim-args', name: 'mcp__fake__thing', args: { zzz: 1 }, agent: agentKey })
   assert.equal(rejected.isError, true)
   const text = rejected.content.map((b) => b.text ?? '').join('\n')
@@ -610,4 +639,71 @@ test('SDK slim v0.2: config validation for the new keys', () => {
   // every one of these keys through a real cordis scope.
 })
 
+// ---------- dsh 0.2: shrinking through the mounted tool executor ----------
 
+/** An executor that behaves like the PTC one: it owns prompt sections. */
+const sectionBearingExecutor = {
+  name: 'fake-ptc-executor',
+  sections: [{ name: 'tools:sdk', order: 5000, text: () => 'DECLARATIONS FROM THE EXECUTOR' }],
+  describe: (definitions) => ({
+    schemas: definitions.map((d) => ({ name: d.name, description: d.description, parameters: d.parameters })),
+  }),
+  execute: async () => { throw new Error('the fake executor never executes') },
+}
+const fakePtcRow = {
+  name: 'fake-ptc-row',
+  inject: ['tools'],
+  apply: (ctx) => { ctx.tools.setExecutor(sectionBearingExecutor) },
+}
+
+test('executor wrap: describe() shrinks while the registry keeps the real schema', async () => {
+  const { root, agentKey } = await setup({ executor: 'wrap' })
+  const assembly = await root.systemPrompt.assemble({ scope: agentKey })
+  const seen = findTool(assembly.tools, 'bigtool')
+  assert.ok(seen.description.endsWith('…'), 'the presented description must shrink')
+  assert.ok(seen.parameters.properties.path.description.endsWith('…'), 'nested prose must shrink too')
+  // The executor projects the live registry, parameters by reference: a
+  // mutating shrink would leak its caps straight into the real definition.
+  const definition = registryEntry(root, agentKey, 'bigtool')
+  assert.ok(definition.description.length > 300, 'registry description must stay full')
+  const view = registryView(root, agentKey).find((d) => d.name === 'bigtool')
+  assert.ok(view.parameters.properties.path.description.length > 100, 'registry property prose must stay full')
+  const ran = await dispatch(root, { callId: 'c-wrap', name: 'bigtool', args: { path: 'ok' }, agent: agentKey })
+  assert.equal(ran.value, 'ran:bigtool:ok', 'the real body still runs')
+})
+
+test('executor wrap: the presented bytes are stable across assemblies', async () => {
+  const { root, agentKey } = await setup({ executor: 'wrap' })
+  const once = JSON.stringify((await root.systemPrompt.assemble({ scope: agentKey })).tools)
+  const twice = JSON.stringify((await root.systemPrompt.assemble({ scope: agentKey })).tools)
+  assert.equal(twice, once, 'the wrapper must present the same bytes every turn')
+})
+
+test('executor wrap: an executor presenting its own sections is never shadowed', ONLY_EXECUTOR_ERA, async () => {
+  // The PTC executor owns tools:sdk, and that text renders only while it is
+  // the selected executor. Shadowing it would blank the very section this
+  // plugin shrinks - the biggest win of a PTC deployment - to win a wire
+  // carrying nothing but the entrypoint tool.
+  const { root, agentKey } = await setup({ executor: 'wrap' }, { executorOverride: fakePtcRow })
+  const assembly = await root.systemPrompt.assemble({ scope: agentKey })
+  const sdk = assembly.sections.find((s) => s.name === 'tools:sdk')
+  assert.ok(sdk !== undefined, 'the executor section must still render')
+  assert.match(sdk.text, /DECLARATIONS FROM THE EXECUTOR/, 'shadowing would blank exactly this text')
+  assert.ok(findTool(assembly.tools, 'bigtool').description.length > 300, 'and the wire stays full-fidelity')
+})
+
+test('executor wrap: a missing executor is a warning, not a broken composition', ONLY_EXECUTOR_ERA, async () => {
+  // Nothing to wrap: the row must mount, say so and stay harmless - a plugin
+  // that throws at mount takes the whole agent down with it.
+  const { root, agentKey } = await setup({ executor: 'wrap' }, { withExecutor: false, pluginFirst: true })
+  assert.throws(() => root.tools.selectExecutor(agentKey), 'no executor may be invented')
+})
+
+test('executor wrap: a second row in one scope leaves the first in charge', ONLY_EXECUTOR_ERA, async () => {
+  // Two profiles both asking for wrap: the second setExecutor throws, which
+  // has to become a log line with the first wrapper still shrinking.
+  const universe = await setup({ executor: 'wrap' })
+  await universe.preset.ctx.plugin(plugin, { executor: 'wrap' })
+  const assembly = await universe.root.systemPrompt.assemble({ scope: universe.agentKey })
+  assert.ok(findTool(assembly.tools, 'bigtool').description.endsWith('…'))
+})

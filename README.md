@@ -19,7 +19,7 @@ inherits it) and shrinks, for exactly the agents composed under that mount:
 
 | what it shrinks | how | default |
 | --- | --- | --- |
-| oversized tool `description` and nested property descriptions in the wire `tools[]` | cap or drop; `title` / `examples` dropped | on |
+| oversized tool `description` and nested property descriptions in the wire `tools[]` | cap or drop; `title` / `examples` dropped | on (dsh 0.2: set `executor: wrap`) |
 | `### MCP server: …` instruction sections | truncate to `instructionsCap` | 2000 chars |
 | **PTC mode** — JSDoc prose of the generated SDK declarations (the `tools:sdk` section) | cap the summary and each `@param` / `@returns` line | off |
 | **PTC mode, v0.2** — the declaration *layout* of matched tools, plus `ToolOutputMap` | one line per tool; result typings collapsed to one index signature | off |
@@ -85,6 +85,10 @@ Config sweep over the biggest `tools[]` payloads in the same logs
 Live: core 38 tools 32,153 → 24,646c (−23.3%), comfy 39 tools 61,736 → 20,072c
 (−67.5%), a 35-tool session's whole wire 31,140 → 23,633c (−24.1%), with 0.1–0.3%
 residual over-cap prose.
+
+Those captures are 0.1 traffic. The shrink is a transform over the schemas, not over a
+carrier, so on dsh 0.2 the identical pass at `describe()` time emits byte-for-byte the same
+schemas — pinned by the integration suite on both harnesses rather than by a second capture.
 
 ### Why 90 characters of description are worth keeping
 
@@ -182,6 +186,7 @@ mount only costs you the wire shrink.
   config:
     # --- wire tools[] (any presentation) ---
     enabled: true              # kill switch
+    executor: 'off'            # dsh 0.2 only: 'wrap' shrinks the wire through the executor
     include: ["*"]             # globs of tool names to shrink
     exclude: []                # globs never shrunk (wins over include)
     minChars: 1200             # only shrink schemas whose JSON is at least this long
@@ -247,10 +252,13 @@ Four public-API mechanisms. No core patches, **no registry mutation**.
    because of this). The assembly is the one place every visible tool passes through,
    whatever its origin.
 
-    On dsh >= 0.2 this first mechanism has nothing to work on: presentation moved out of
-    `ToolsService` into a mountable tool executor, so `tools[]` never enters this carrier.
-    The section work below keeps running, and it is the bigger half of the win — see
-    [Limitations](#limitations) for the exact split.
+    From dsh 0.2 presentation moved out of `ToolsService` into a mountable tool executor
+   (`tools.mode` is `z.never()`), so `tools[]` no longer enters this carrier at all — the
+   shrink moves with it. With `executor: wrap` the plugin registers a wrapper over the
+   executor the scope already selected: `describe()` runs exactly the pass above over what
+   the inner executor returns, `execute()` delegates untouched, and the bytes the model
+   reads are the same bytes either way. When to turn it on, and why it refuses to shadow a
+   PTC executor, is in [The executor contract](#the-executor-contract-dsh-0-2).
 
 2. **Section shrink.** In the same waterfall `mcp:*` sections are truncated to
    `instructionsCap`, and — when `sdkDescriptionCap` is set — the `tools:sdk` section goes
@@ -281,7 +289,38 @@ Four public-API mechanisms. No core patches, **no registry mutation**.
    which never carry `ToolArgsError` — is answered with the live registry schema, or with
    the stored original declaration when the registry is out of reach. Runtime failures (a
    server that is simply down) are left exactly as they are, and `sdkSlimHeal: false`
-   switches the rescue off.
+   switches the rescue off. On dsh 0.2 the arguments are rejected inside the pipeline, ahead
+   of dispatch, and the normalized `ToolArgsError` still arrives on this hook (verified
+   against 0.2.2-rc.1) — armed by `describe()` instead of the assembly.
+
+### The executor contract (dsh 0.2)
+
+0.2 turned tool presentation into a mountable service: `ctx.tools.setExecutor(executor)`
+takes an object with `describe(definitions)` and `execute(batch)` — one executor per scope —
+and `selectExecutor(scope)` answers with the nearest one walking up the scope chain. The
+plugin's wrapper is that object with a shrink in the middle, and it mounts only when asked:
+
+- `executor: 'wrap'` (default `'off'`, which is all dsh 0.1 needs) resolves the executor the
+  mount scope selects and registers a wrapper over it on the plugin's own scope, so **the row
+  has to mount below the executor row**. In the real deployment the executor is the profile
+  default and this bundle's row is a profile patch: nearer to the agents, so the wrapper
+  serves them and every scope under them, while an agent that resolves a different executor
+  keeps that executor's contract.
+- The wrapper presents no sections of its own and refuses to replace an executor that does.
+  A PTC executor owns `tools:ptc-only` and `tools:sdk`, and an executor's section renders only
+  while it is the selected one — shadow it and the very section this plugin shrinks goes blank
+  for exactly the agents the wrapper was meant to help, traded away for a wire that in PTC mode
+  carries nothing but `run_code`. So: `wrap` where the native executor presents, `off` where a
+  PTC executor does, and the plugin logs that reasoning instead of overriding it.
+- `execute()` is a pure delegate. The pipeline emits `tools/post-execute` for every call it
+  ran, including the ones it rejected itself, so self-heal needs no second path — only the
+  real schemas, which `describe()` now hands it exactly as the assembly used to.
+- Every refusal is a warning, never a throw: no executor in the composition, an executor that
+  owns sections, a scope already carrying a wrapper (the first stays in charge), a harness
+  without the contract at all. A plugin that throws at mount takes the agent down with it.
+
+The shrink inside the wrapper is the same pure `shrinkToolSchema` pass, so it is as
+byte-stable as the assembly one — a test assembles twice and compares bytes.
 
 **Determinism contract.** Every transform is a pure function of the assembled input, so
 caches stay warm and a restart mid-conversation does not re-price the history. Reading an
@@ -297,6 +336,14 @@ boot) the plugin logs one line per change of state:
 ```
 toolscode: shrunk 39 tool schemas: 61736 -> 20072 chars (-67.5%); SDK section 140694 -> 75346 chars (-46.4%)
 ```
+
+With `executor: wrap` one more line is logged per scope, at mount rather than at assembly:
+
+```
+toolscode: shrinking the wire schemas of "NativeToolExecutor" through an executor wrapper
+```
+
+…and every refusal it decided against is a warning naming the executor and the reason.
 
 …and the logged `request/header` shows `…`-terminated descriptions. For anything beyond a
 glance, measure from the session logs (a web server has no grep-able plugin log):
@@ -318,7 +365,7 @@ dependencies.
 ## Tests
 
 ~~~sh
-npm test          # 36 tests: pure + integration against a real cordis universe
+npm test          # 41 tests: 28 integration against a real cordis universe + 13 pure
 npm run test:unit # 13 pure sdk-slim tests — no dependencies at all
 ~~~
 
@@ -330,19 +377,24 @@ covers the shrunk assembly against an untouched second preset, untouched registr
 definitions, real-dispatch self-heal (positive and negative), instruction scoping,
 `minChars` / `include` / `exclude` steering, byte-stability across assemblies plus late
 registration (the cache contract), config validation, deep `items` / `anyOf` recursion,
-the SDK prose shrink, and the v0.2 slim (default keeps the section byte-identical; table +
+the SDK prose shrink, the v0.2 slim (default keeps the section byte-identical; table +
 stub compacts it while keeping every declaration; `sdkSlimMinEntries` gates the layout
 rewrite while the stub stays independent; a rejected slimmed tool is answered with the
-real contract; `sdkSlimHeal: false` stops the disclosure).
+real contract; `sdkSlimHeal: false` stops the disclosure), and the executor wrapper:
+shrunk presentation over an untouched registry, byte-stable `describe()`, a section-owning
+executor declined, a missing executor survived, a second row in one scope left to the first.
+
+The same 28 tests cover **both** harness contracts, feature-detected rather than
+version-parsed: 0.1 shrinks through the assemble carrier, 0.2 through the executor, and every
+wire assertion in between is identical. Only the three cases that exist solely to pin the
+executor contract skip on 0.1, with a printed reason.
 
 The integration job runs the suite twice: against the pinned harness version this plugin
-is deployed against, and against the `latest` dist-tag. Both are hard gates. dsh 0.2 moved
-tool presentation and execution behind a mountable executor, so the suite feature-detects
-the contract (`tools.setExecutor`), mounts `@deepseek-ai/dsh-tool-executor-native` when the
-harness demands one, dispatches through the batch form of `tools.execute()`, reads the
-registry through whichever accessor exists, and skips the six tests whose subject the new
-contract moved out of reach — the skip reason is printed in the TAP output, so a green
-`latest` run still says what it did not check.
+is deployed against, and against the `latest` dist-tag. Both are hard gates, and both are
+green with no skipped wire or self-heal case: on 0.2 the universe mounts
+`@deepseek-ai/dsh-tool-executor-native` at the root, dispatches through the batch form of
+`tools.execute()`, reads the registry through whichever accessor exists, and runs the plugin
+with `executor: wrap`.
 
 The suite needs the `@deepseek-ai/dsh` package. It looks for it in `DSH_ROOT`, then a
 local/hoisted `node_modules`, then the npm global root. CI runs the pure suite on a Node
@@ -351,16 +403,16 @@ matrix without any install, and the full suite against the published harness pac
 
 ## Limitations
 
-- On dsh >= 0.2 the wire `tools[]` shrink is inert. 0.2 deleted the built-in presentation
-  (`tools.mode` is `z.never()`) and gave `describe()` to the tool executor, so the schemas
-  never pass through `system-prompt/assemble` — there is nothing left for a post-order
-  listener to map. Restoring it means wrapping the executor (`describe` shrinks what the
-  inner one returns, `execute` delegates), which this plugin does not do yet. Everything
-  section-shaped is unaffected and is where the measured win lives: `mcp:*` instructions,
-  SDK prose, the declaration slim, and self-heal of a slimmed tool that a server rejected.
-  Argument rejections raised by the harness itself also moved inside the pipeline, ahead of
-  dispatch, so on 0.2+ the `ToolArgsError` rescue only covers rejections that come back as
-  tool results — which is what an MCP server does anyway.
+- On dsh >= 0.2 the wire shrink needs `executor: wrap`: 0.2 deleted the built-in presentation
+  (`tools.mode` is `z.never()`), so `tools[]` no longer passes through
+  `system-prompt/assemble` and a post-order listener has nothing left to map. Wrapping is
+  opt-in rather than automatic on purpose — it takes over a presentation the deployment
+  mounted, and silently re-plumbing someone else's is not a plugin's call. Turn it on per
+  scope, and not where a PTC executor presents (it owns the sections; see
+  [The executor contract](#the-executor-contract-dsh-0-2)). Everything section-shaped works
+  unchanged on both harnesses, and that is where the measured win lives: `mcp:*` instructions,
+  SDK prose, the declaration slim, and self-heal of a rejected call — the harness's own
+  argument rejection still reaches `tools/post-execute` on 0.2.
 - The shrink is lossy by design: a model that needs a dropped nuance learns it through the
   self-heal round-trip instead of paying for it on every step.
 - `run_code` is never shrunk (its contract is what the model writes code against), so in
@@ -392,7 +444,8 @@ matrix without any install, and the full suite against the published harness pac
 ## Repository layout
 
 ```
-lib/index.js               plugin: config validation, the two waterfall listeners, self-heal
+lib/index.js               plugin: config validation, two waterfall listeners, self-heal,
+                           the dsh 0.2 executor wrapper
 lib/shrink.js              pure wire / instruction / JSDoc prose shrinkers  (…/shrink)
 lib/sdk-slim.js            pure declaration slimming + ToolOutputMap stub    (…/sdk-slim)
 tools/measure.mjs          session-log measurer, no dependencies
@@ -416,10 +469,11 @@ plugin is safe to point at a 333-tool prompt.
 
 - Node `^22.19.0 || >=24.0.0` (and >= 22.15 for `tools/measure.mjs`).
 - A DSH profile with cordis >= 4.0.1. CI runs the integration suite against the pinned
-  0.1.7-rc.2 install and against `latest` (0.2.2-rc.1 at the time of writing); see
-  [Limitations](#limitations) for what the 0.2 executor contract changes. The wire and
-  instruction shrinks work on any preset; the `sdk*` keys only apply to presets that present
-  tools as a generated SDK (PTC mode).
+  0.1.7-rc.2 install and against `latest` (0.2.2-rc.1 at the time of writing): the same tests
+  pass on both, and on 0.2 the wire shrink asks for `executor: wrap` plus an executor row
+  mounted above the plugin row (`@deepseek-ai/dsh-tool-executor-native` or your own). The
+  wire and instruction shrinks work on any preset; the `sdk*` keys only apply to presets that
+  present tools as a generated SDK (PTC mode), where `executor` stays `'off'`.
 
 ## License
 

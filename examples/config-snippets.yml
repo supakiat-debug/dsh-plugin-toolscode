@@ -91,3 +91,26 @@
 #     # sdkOutputMap: keep       # keep ToolOutputMap verbatim (default)
 #     # sdkSlimMarker: false     # no explanatory note under a slimmed section
 #     # sdkSlimHeal: false       # compact table, no schema disclosure on rejection
+#     # executor: off            # never wrap the tool executor (default; dsh 0.2 only)
+
+# ---------------------------------------------------------------------------
+# 6. dsh >= 0.2: the same wire shrink, through the tool executor
+# ---------------------------------------------------------------------------
+#
+# From dsh 0.2 the tool executor — not the assembly waterfall — presents tools[], so the
+# wire shrink needs to move with it. Mount the row below the executor row (the profile
+# default is the usual one): the wrapper wraps the executor this scope selects and serves
+# every agent under it.
+#
+#   - id: toolscode
+#     name: dsh-plugin-toolscode
+#     config:
+#       executor: wrap           # dsh >= 0.2 only; 'off' (default) leaves the executor alone
+#       minChars: 600
+#       descriptionCap: 160
+#       nestedDescriptionCap: 80
+#
+# Leave it off wherever a PTC executor presents. It owns tools:ptc-only and tools:sdk, an
+# executor's sections render only while it is the selected executor, and in PTC mode the
+# wire holds nothing but run_code — shadowing it would blank the biggest win of this
+# plugin to save nothing. The wrapper declines that and says why in the log.
