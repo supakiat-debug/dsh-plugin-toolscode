@@ -813,13 +813,21 @@ test('dropDeclarations: a dropped tool loses both interfaces and its doc; the re
   assert.equal(sdkSlim.dropDeclarations('declare const tools: never', ['*']).text, 'declare const tools: never', 'a Python SDK is not parsed')
 })
 
-test('isPtcAssembly: only an assembly serving the SDK with nothing else callable counts', () => {
+test('isPtcAssembly: the harness has to say it, not merely serve the SDK', () => {
   const sdk = { name: 'tools:sdk', text: 'interface ToolArgsMap {' }
-  assert.equal(pluginModule.isPtcAssembly({ sections: [sdk], tools: [{ name: 'run_code' }] }), true)
-  assert.equal(pluginModule.isPtcAssembly({ sections: [sdk], tools: [] }), true, 'dsh 0.2: the executor presents, tools[] is empty')
-  assert.equal(pluginModule.isPtcAssembly({ sections: [sdk] }), true, 'or carries no wire at all')
-  assert.equal(pluginModule.isPtcAssembly({ sections: [sdk], tools: [{ name: 'run_code' }, { name: 'read' }] }), false, 'both mode is not ptc')
-  assert.equal(pluginModule.isPtcAssembly({ sections: [{ name: 'tools:sdk', text: '' }], tools: [] }), false, 'a section that rendered empty is not being served')
+  const emptySdk = { name: 'tools:sdk', text: '' }
+  const says = (text) => ({ name: 'tools:ptc-only', text })
+  const only = 'run_code is the only tool you can call directly'
+  assert.equal(pluginModule.isPtcAssembly({ sections: [says(only), sdk], tools: [{ name: 'run_code' }] }), true)
+  assert.equal(pluginModule.isPtcAssembly({ sections: [says(only), sdk] }), true, 'dsh 0.2: the executor presents, and tools[] never reaches this carrier')
+  assert.equal(pluginModule.isPtcAssembly({ sections: [says(''), sdk], tools: [] }), false, 'mode both: the declarations are served and a native call still works')
+  assert.equal(pluginModule.isPtcAssembly({ sections: [says(''), sdk], tools: [{ name: 'run_code' }] }), false, 'the rule section overrules the wire - it is the harness own sentence')
+  assert.equal(pluginModule.isPtcAssembly({ sections: [says(only), emptySdk] }), false, 'and it is still not PTC with no declarations being served')
+  assert.equal(pluginModule.isPtcAssembly({ sections: [sdk], tools: [{ name: 'run_code' }] }), true, 'a harness that registers no rule section: the wire decides')
+  assert.equal(pluginModule.isPtcAssembly({ sections: [sdk], tools: [{ name: 'run_code' }, { name: 'read' }] }), false, 'a wire naming a callable tool is native')
+  assert.equal(pluginModule.isPtcAssembly({ sections: [sdk] }), false, 'a missing array is not an empty one: reading it as one strips a native dsh 0.2 prompt')
+  assert.equal(pluginModule.isPtcAssembly({ sections: [sdk], tools: [] }), false, 'a wire of nothing is no statement about the mode either')
+  assert.equal(pluginModule.isPtcAssembly({ sections: [emptySdk], tools: [{ name: 'run_code' }] }), false, 'a section that rendered empty is not being served')
   assert.equal(pluginModule.isPtcAssembly({ sections: [], tools: [{ name: 'read' }] }), false)
   assert.equal(pluginModule.isPtcAssembly({ sections: [] }), false, 'and an executor-era native assembly stays native')
 })
@@ -834,11 +842,17 @@ test('PTC mode: guidance promising a direct call goes away, and only while the S
     { name: 'tool:read', order: 1100, text: 'Use the read tool - not shell commands.' },
     { name: 'tool:grep', order: 1120, text: 'Use the grep tool - not shell grep.' },
   ]
-  // The PTC assembly: the SDK is served, and `drop` has taken the last wire
-  // tool out, so nothing a tool call may name is left but the transport.
+  const PTC_ONLY = { name: 'tools:ptc-only', order: 940, text: 'run_code is the only tool you can call directly - a tool call naming any other tool fails.' }
+  const serveSdk = (universe, rule) => {
+    if (rule !== null) universe.root.systemPrompt.section(rule === true ? PTC_ONLY : { ...PTC_ONLY, text: '' })
+    universe.root.systemPrompt.section({ name: 'tools:sdk', order: 950, interpolate: false, text: sdkGenerated })
+    for (const section of guidance) universe.root.systemPrompt.section(section)
+  }
+
+  // PTC: the harness states that only the transport may be named, and serves the
+  // declarations a program reaches through.
   const ptc = await setup(config)
-  ptc.root.systemPrompt.section({ name: 'tools:sdk', order: 950, interpolate: false, text: sdkGenerated })
-  for (const section of guidance) ptc.root.systemPrompt.section(section)
+  serveSdk(ptc, true)
   const assembly = await ptc.root.systemPrompt.assemble({ scope: ptc.agentKey })
   const names = assembly.sections.map((s) => s.name)
   assert.equal(names.includes('tool:grep'), false, 'the paragraph the deployment deleted is off the prompt')
@@ -847,26 +861,52 @@ test('PTC mode: guidance promising a direct call goes away, and only while the S
   const sdk = assembly.sections.find((s) => s.name === 'tools:sdk').text
   assert.ok(!sdk.includes('sort_range'), 'a dropped tool leaves the declarations too - there they are the wire')
   assert.ok(sdk.includes('mcp__gridcraft__set_cell') && sdk.includes('advanced_search'), 'and only the dropped ones')
-  assert.equal(assembly.tools.length, 0, 'the wire was emptied by the same drop list')
   const again = await ptc.root.systemPrompt.assemble({ scope: ptc.agentKey })
   assert.deepEqual(again.sections, assembly.sections, 'byte-stable across assemblies: the cache survives')
 
-  // The native assembly beside it: same config, same sections, and not one
-  // paragraph of guidance is touched - only the declaration of a dropped tool.
-  const native = await setup({ ...config, drop: ['mcp__gridcraft__sort_range'] })
-  native.root.systemPrompt.section({ name: 'tools:sdk', order: 950, interpolate: false, text: sdkGenerated })
-  for (const section of guidance) native.root.systemPrompt.section(section)
-  const nativeAssembly = await native.root.systemPrompt.assemble({ scope: native.agentKey })
-  assert.ok(nativeAssembly.tools.some((tool) => tool.name === 'bigtool'), 'the wire still names callable tools')
-  assert.equal(nativeAssembly.sections.find((s) => s.name === 'tool:grep').text, guidance[1].text, 'PTC-only config does not fire')
-  assert.equal(nativeAssembly.sections.find((s) => s.name === 'tool:read').text, guidance[0].text)
-  assert.ok(!nativeAssembly.sections.find((s) => s.name === 'tools:sdk').text.includes('sort_range'), 'drop applies wherever the declarations are served')
+  // Mode `both`, beside it: the same deployment serves the very same
+  // declarations, but the rule section renders empty because a native call is
+  // not denied there. Not one paragraph of guidance may move - and on dsh 0.2
+  // this is the assembly whose carrier carries no wire to read, which is exactly
+  // why the sentence, and not the array, decides.
+  const both = await setup({ ...config, drop: ['mcp__gridcraft__sort_range'] })
+  serveSdk(both, false)
+  const bothAssembly = await both.root.systemPrompt.assemble({ scope: both.agentKey })
+  assert.ok(bothAssembly.tools.some((tool) => tool.name === 'bigtool'), 'the wire still names callable tools')
+  assert.equal(bothAssembly.sections.find((s) => s.name === 'tool:grep').text, guidance[1].text, 'PTC-only config does not fire')
+  assert.equal(bothAssembly.sections.find((s) => s.name === 'tool:read').text, guidance[0].text)
+  assert.ok(!bothAssembly.sections.find((s) => s.name === 'tools:sdk').text.includes('sort_range'), 'drop applies wherever the declarations are served')
 
-  // And with no SDK served at all, an emptied wire is still not PTC.
+  // And with no rule section and no SDK served at all, nothing is a PTC signal.
   const bare = await setup(config)
-  for (const section of guidance) bare.root.systemPrompt.section(section)
+  serveSdk(bare, null)
   const bareAssembly = await bare.root.systemPrompt.assemble({ scope: bare.agentKey })
   assert.equal(bareAssembly.tools.length, 0)
   assert.equal(bareAssembly.sections.find((s) => s.name === 'tool:grep').text, guidance[1].text, 'no SDK, no PTC, no deletions')
 })
+
+test('a deployment serving the SDK with no rule section is not PTC on either harness', async () => {
+  // The shape dsh 0.2.2-rc.5 CI caught. dsh >= 0.2 moved tools[] into a
+  // mountable executor that contributes it after this waterfall, so a hook can
+  // never read "nothing else is callable" out of a missing array. Reading it
+  // that way deleted a native deployment's guidance the moment it served the
+  // SDK - and every native agent beside a PTC one would have paid for it.
+  const config = {
+    ptcDropSections: ['tool:grep'],
+    ptcSectionText: { 'tool:read': 'Call tools.read(...) from inside the program.' },
+  }
+  const guidance = [
+    { name: 'tool:read', order: 1100, text: 'Use the read tool - not shell commands.' },
+    { name: 'tool:grep', order: 1120, text: 'Use the grep tool - not shell grep.' },
+  ]
+  const universe = await setup(config)
+  universe.root.systemPrompt.section({ name: 'tools:sdk', order: 950, interpolate: false, text: sdkGenerated })
+  for (const section of guidance) universe.root.systemPrompt.section(section)
+  const assembly = await universe.root.systemPrompt.assemble({ scope: universe.agentKey })
+  assert.equal(pluginModule.isPtcAssembly(assembly), false, 'the declarations are served and nothing denies a native call')
+  for (const section of guidance) {
+    assert.equal(assembly.sections.find((s) => s.name === section.name).text, section.text, section.name + ' survives verbatim')
+  }
+})
+
 

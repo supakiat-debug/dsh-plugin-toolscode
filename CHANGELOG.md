@@ -4,7 +4,41 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.5.0] - 2026-11-21
+## [0.5.1] - 2026-11-22
+
+CI caught a real bug on the newer harness: a **native** dsh 0.2 deployment that serves the SDK
+was having its per-tool guidance deleted. Released as a patch, because the config surface did
+not move.
+
+### Fixed
+
+- `isPtcAssembly()` no longer reads PTC out of a missing `tools[]` array. The 0.5 rule was "the
+  SDK is being served *and* nothing but the transport is on the wire", where the second half
+  accepted an absent array — a clause added because dsh ≥ 0.2 moved `tools[]` into a mountable
+  executor that contributes it *after* the `system-prompt/assemble` waterfall, so inside this
+  hook the carrier never carries it. Measured on 0.2.2-rc.5: the carrier's `tools` is
+  `undefined` for every assembly there, native included, while the caller still sees the wire —
+  so the clause was not merely weak evidence, it was always true, and any 0.2 deployment serving
+  the SDK counted as PTC. With `ptcDropSections` set, that stripped a native agent's guidance:
+  bisected to one config key, `ptcDropSections: ['tool:grep']` alone removed `tool:grep` from a
+  native assembly on rc.5 and left it alone on 0.1.7-rc.2.
+- PTC is now detected from the harness's own statement: the `tools:ptc-only` section, with text
+  in it. `dsh-tools` registers it with the sentence in PTC, registers it with an **empty** text
+  in mode `both` — where the declarations are served *and* a native call still works, the one
+  mode the old rule could not tell apart — and registers no such section in `native`; on 0.2 the
+  same section belongs to the selected PTC executor. Where a harness registers neither, the wire
+  decides, and only when the carrier really carries one: an absent array is not an empty array,
+  and an empty wire is no statement about the mode either. Exported as `PTC_ONLY_SECTION`.
+- Tests: `isPtcAssembly()` gained the shapes that were missing — rule present, rule empty with a
+  `run_code`-only wire, no rule with a real wire, no array at all — and the PTC integration test
+  now registers the rule section the way the harness does, beside a `both` universe that serves
+  the same declarations and must keep every paragraph. 50 tests, green on 0.1.7-rc.2 (4 skipped,
+  the executor contract not existing yet) and on 0.2.2-rc.5 (0 skipped).
+- The measured win is unchanged, because the deployed preset really does say it: PTC guidance
+  6,032 → 3,271 (−46%), `tools:sdk` 140,694 → 73,147 (−48%), byte-stable across assemblies.
+  `research/prompt-shrink/measure-ptc.mjs` now produces the condition by registering that rule
+  section, which is what the harness does, instead of by leaving the wire empty.
+
 
 PTC mode was being told two opposite things at once. This teaches the plugin to notice which
 presentation it is serving, and to fix the half of the prompt that PTC broke.

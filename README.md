@@ -117,9 +117,14 @@ back `UNKNOWN_TOOL`, because `collapses()` denies the native name rather than re
 
 `ptcDropSections` takes those sections out by glob; `ptcSectionText` then serves this
 deployment's own wording of whatever rule still holds from inside a program. Detection is
-derived from the assembly — the SDK section is being served *and* nothing callable but the
-transport is on the wire — never from config, because presentation is per scope: a native
-agent beside a PTC one under the same mount keeps every paragraph it was given.
+that sentence itself: PTC is where the SDK declarations are being served *and* the harness
+is serving `tools:ptc-only` with its text. It is never read off config, because presentation
+is per scope — a native agent beside a PTC one under the same mount keeps every paragraph it
+was given. Mode `both` is why the sentence, and not the wire, is the signal: it serves the
+declarations while a native call still works. And on dsh ≥ 0.2 the wire cannot be read here
+at all — `tools[]` comes from a mountable executor that contributes it after this waterfall,
+so an absent array says nothing; where a harness registers no rule section either, the wire
+decides, and only when the carrier really carries one.
 
 Deployed here and replayed over the captured live prompt (`research/prompt-shrink/measure-ptc.mjs`):
 
