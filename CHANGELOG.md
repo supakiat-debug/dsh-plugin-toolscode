@@ -4,6 +4,96 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0] - 2026-11-21
+
+PTC mode was being told two opposite things at once. This teaches the plugin to notice which
+presentation it is serving, and to fix the half of the prompt that PTC broke.
+
+### Added
+
+- `ptcDropSections` config key (globs, empty default). Removes the per-tool guidance sections
+  — `tool:read`, `tool:grep`, `tool:doc_read`, `tool:subagent`, … — on an assembly that is
+  presenting the SDK, and only there. The reason is not the size, it is the contradiction:
+  `dsh-tools` registers one 180-char sentence at order 800 saying `run_code` is the only tool
+  the model may call, and the tool packages then register ~4,600 chars of imperative guidance
+  at orders 1010–2900 telling it to "use the read tool", "use the grep tool", "call present".
+  Over one captured assembly, **19 of its 30 prompt blocks — 7,677 characters — name a tool
+  that cannot be called**, 43:1 against the rule and ordered after it; a model that follows
+  the newest, most specific sentence emits `read` and is answered with `UNKNOWN_TOOL`, because
+  PTC `collapses()` denies the native name rather than rescuing it.
+- `ptcSectionText`, the same override over those sections, for the rules that still hold from
+  inside a program. Applied after `ptcDropSections`, and like every other override it can
+  never invent a section, so the consolidated paragraph goes on a surviving carrier name.
+- PTC detection is derived from the assembly, never from config: `isPtcAssembly()` is true
+  when the `tools:sdk` section is being served *and* nothing callable but the transport (or,
+  on dsh 0.2, nothing at all — an executor-owned `tools[]` never reaches the assembly) is on
+  the wire. Presentation is per scope, so a native agent beside a PTC one under one mount
+  keeps every paragraph it was given.
+- `drop` now also cuts the dropped tools' **declarations** out of the generated SDK, through a
+  new exported `dropDeclarations()` in `lib/sdk-slim.js`: it removes both `ToolArgsMap` /
+  `ToolOutputMap` entries and the JSDoc block above the first of them, walks back over
+  annotation lines, keeps brace balance, is idempotent, and leaves every other byte of the
+  section alone. One key now means "off the wire" in both presentations, which in PTC is the
+  same object. The tool stays registered, so a call written from memory still resolves.
+- The unmatched-name warning now prints the section and context names that assembly really
+  serves. A guessed name (`file-reference` where the harness registers
+  `context:file-reference`) used to be a silent no-op that looked like a saving in the diff.
+
+### Measured
+
+With the deployed row, replayed over the captured live prompt and the captured 140,694-char
+`tools:sdk` (`research/prompt-shrink/measure-ptc.mjs`):
+
+- tool-guidance surface **6,032 → 3,271 chars (−46%)** on a PTC assembly — nine sections
+  removed, eight reworded, their surviving rules landing in one 631-char carrier paragraph;
+- the same surface **6,032 → 4,328 (−28%)** on the native assembly, where only the v0.4
+  rewrites apply, which is the proof that the PTC half stays off where it should;
+- `tools:sdk` **140,694 → 73,147 chars (−48%)**, of which 1,742 is the new declaration cut;
+- byte-stable across two assemblies of an unchanged state, so `toolsChanged()` still sees no
+  churn and the prompt/KV cache stays warm.
+
+### Tests
+
+- 49 tests, 0 failures (4 skipped, executor-gated): `dropDeclarations` losing both interfaces
+  and the doc while the rest of the section stays byte-identical, idempotent, glob-driven and
+  identity when nothing matches; `isPtcAssembly` over seven assembly shapes; and a PTC test
+  that runs three universes — PTC, native control, and an SDK-less assembly — asserting the
+  guidance disappears only in the first, that a typo'd name is never invented, and that the
+  whole rewrite is byte-stable across re-assembly.
+- Config validation covers `ptcDropSections` / `ptcSectionText`, and PTC keys are only checked
+  for misses when the assembly is in PTC mode: on a native one they are meant to match nothing.
+
+## [0.4.0] - 2026-11-19
+
+Making the prompt smaller, not just cheaper per paragraph: `drop`, `sectionText`, `contextText`.
+
+### Added
+
+- `drop` config key (globs, empty default). Matched tools are taken off the wire entirely —
+  the model stops seeing a definition for a tool this deployment does not want used, which is
+  how redundant search tools stop costing a description each. The registry is untouched:
+  dispatch, validation and presentation all still work, so a call the model makes anyway is
+  answered rather than refused. Implemented on both paths (assembly `tools[]` and the
+  executor `describe()`), so one config behaves the same on dsh 0.1 and 0.2; `knownNames`
+  deliberately keeps the dropped names.
+- `sectionText` config key (section name → text). Serves this deployment's own summary in
+  place of a harness-owned paragraph, `''` removes it, and a name that is not registered is
+  skipped and named in a warning — an upstream rename must cost nothing, not serve a stale
+  paragraph under a heading nobody has any more. Applied post-order like the shrink, so the
+  bytes replaced are exactly the bytes that would have been served, and byte-stable, so the
+  prompt/KV cache stays warm.
+- `contextText`, the same over the runtime-context snapshot entries. Documented as the option
+  to reach for last: those entries re-render when a policy changes, and hand-written prose
+  freezes the old policy into every prompt.
+- One log line now covers all of it (shrunk schemas, dropped definitions, rewritten entries,
+  with before/after chars), and a configured-but-unmatched override name warns once per change.
+
+### Tests
+
+- 46 tests, 0 failures: drop leaves the wire but still dispatches, drop parity through the
+  executor wrapper, replace/remove/never-invent for sections with position and byte-stability
+  kept, context rewording in order, and config validation for the three new keys.
+
 ## [0.3.0] - 2026-11-18
 
 Full support for the dsh 0.2 tool-executor contract: the wire shrink is back.

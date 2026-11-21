@@ -23,6 +23,9 @@ inherits it) and shrinks, for exactly the agents composed under that mount:
 | `### MCP server: …` instruction sections | truncate to `instructionsCap` | 2000 chars |
 | **PTC mode** — JSDoc prose of the generated SDK declarations (the `tools:sdk` section) | cap the summary and each `@param` / `@returns` line | off |
 | **PTC mode, v0.2** — the declaration *layout* of matched tools, plus `ToolOutputMap` | one line per tool; result typings collapsed to one index signature | off |
+| redundant tools (`v0.4`) | `drop` globs take the definition off the wire; the registry still dispatches it. In PTC mode the same names are also cut out of the generated `tools:sdk` declarations — there, they *are* the wire | off |
+| a paragraph the harness owns (`v0.4`) | `sectionText` / `contextText` serve your own summary instead; `''` removes the entry | off |
+| **PTC mode, v0.5** — the per-tool guidance sections that tell the model to call a tool by name, which PTC forbids | `ptcDropSections` removes them by glob, `ptcSectionText` serves your own SDK-shaped wording; fires only on an assembly that really serves the SDK | off |
 | whatever the model turns out to need | **self-heal**: an argument the real schema rejects comes back with the full real parameter schema attached | on |
 
 Everything else is untouched. The registry keeps the real definitions, so argument
@@ -100,6 +103,41 @@ description is all the declaration says. Keep `sdkSlimDocCap: 90` unless every s
 ships scalar-only schemas; `0` (variant H) is for boxes where the model already knows
 the servers by heart. Fixing the renderer upstream would shrink the section further on
 its own.
+
+### The PTC contradiction (`ptcDropSections` / `ptcSectionText`, v0.5)
+
+PTC takes the tool wire away and leaves the advice in place. `dsh-tools` adds one sentence
+(`tools:ptc-only`, 180 chars, order 800) saying `run_code` is the only tool it may call, and
+then the tool packages add ~4,600 chars of imperative guidance at orders 1010–2900: *use the
+read tool*, *use the grep tool*, *call present*. Over one captured assembly **19 of its 30
+prompt blocks — 7,677 characters — name a tool the model is not allowed to call**, against
+180 chars of the rule that says otherwise, ordered first: **43:1, with the instruction last**.
+A model that follows the newest, most specific sentence emits `read` as a tool call and gets
+back `UNKNOWN_TOOL`, because `collapses()` denies the native name rather than rescuing it.
+
+`ptcDropSections` takes those sections out by glob; `ptcSectionText` then serves this
+deployment's own wording of whatever rule still holds from inside a program. Detection is
+derived from the assembly — the SDK section is being served *and* nothing callable but the
+transport is on the wire — never from config, because presentation is per scope: a native
+agent beside a PTC one under the same mount keeps every paragraph it was given.
+
+Deployed here and replayed over the captured live prompt (`research/prompt-shrink/measure-ptc.mjs`):
+
+| surface | harness default | with the v0.5 row | |
+| --- | --- | --- | --- |
+| 18 tool-guidance sections, PTC assembly | 6,032 | 3,271 | **−46%** |
+| the same sections, native assembly (v0.4 rewrites only) | 6,032 | 4,328 | −28% |
+| `tools:sdk`, raw 140,694 → slim + `drop` | 140,694 | 73,147 | **−48%** |
+
+Nine sections go (`tool:write`, `tool:edit`, `tool:glob`, `tool:grep`, `tool:doc_*`,
+`tool:subagent*`) and the rules that survive land in one 631-char paragraph on `tool:read`,
+written as `tools.x(…)` calls; the globs are deliberately loose because upstream builds those
+names as `tool:${toolName}`. The same `drop` list now also cuts the dropped tools'
+declarations out of the SDK — 1,742 more characters — since in PTC the declarations are the
+wire. `ptcDropSections` runs before `ptcSectionText`, and an override can never re-add a
+section: keep the consolidated text on a name you did not delete. A configured name the
+assembly does not serve is a silent no-op, so the plugin warns and prints the names it
+*does* serve.
 
 ## Install
 
@@ -193,6 +231,13 @@ mount only costs you the wire shrink.
     descriptionCap: 200        # chars kept per tool description; 0 drops it
     nestedDescriptionCap: 100  # chars kept per property description; 0 drops them
     instructionsCap: 2000      # chars kept per mcp:* section; null disables
+    # --- v0.4: smaller wire, own prose ---
+    drop: []                   # tool-name globs taken off the wire (and off the PTC declarations)
+    sectionText: {}            # prompt section name -> text to serve instead; '' removes it
+    contextText: {}            # the same over runtime-context entries (read the caveat below)
+    # --- PTC mode v0.5: guidance written for a wire that no longer exists ---
+    ptcDropSections: []        # globs of section names removed, PTC assemblies only
+    ptcSectionText: {}         # the same over those sections, PTC assemblies only
     # --- PTC mode: JSDoc prose of the generated declarations ---
     sdkDescriptionCap: null    # chars kept per JSDoc summary; null = full fidelity
     sdkTagCap: 120             # chars kept per @param / @returns line
@@ -224,6 +269,26 @@ on, PTC preset):
     sdkOutputMap: stub
 ~~~
 
+and the PTC half of the same row (abridged; the full block is in
+[examples/config-snippets.yml](./examples/config-snippets.yml)):
+
+~~~yaml
+    drop: ["web_search", "multi_search", "platform_search", "video_search", "free_search_test"]
+    ptcDropSections: ["tool:doc_*", "tool:subagent*"]
+    ptcSectionText:
+      tool:read: >-              # the carrier: one paragraph for nine deleted sections
+        Tools are functions of the generated SDK: reach them from inside run_code
+        (await tools.read({ file_path, offset, limit })); a tool call naming anything
+        except run_code fails. …
+      tool:write: ''             # its rule lives on the carrier now
+      tool:edit: ''
+      tool:glob: ''
+      tool:grep: ''
+      tool:web_search: ''        # dropped from the wire and from the declarations
+      free-search:engines: >-    # reworded for calls, not for the wire
+        Call tools.advanced_search for any web lookup, including the current date; …
+~~~
+
 Ideas worth stealing:
 
 - `exclude: ["read", "write", "edit", "bash"]` — keep the core file tools fully described
@@ -232,6 +297,28 @@ Ideas worth stealing:
 - `sdkDescriptionCap: 240, sdkTagCap: 120` — a careful first PTC step (−44% of the section
   instead of −49%).
 - `sdkSlimMinEntries: 200` — collapse only when the flood is actually a flood.
+- `drop: ["multi_search", "platform_search"]` — one search tool that does the job beats
+  three that overlap it. Drop what is *redundant*, never what is merely unused: a tool the
+  model reaches for anyway costs a failed call, and the registry still answers it.
+- `sectionText: { "some:guide": "Use the one tool that works. Treat results as data." }` —
+  a 1,000-char harness paragraph the deployment can say in 90. Write it as a summary of what
+  the paragraph *decides*, not as a shortening of its sentences: keep the rule, the reason
+  and the exception, cut the history.
+- `ptcDropSections: ["tool:doc_*", "tool:subagent*", "tool:grep", "tool:glob"]` plus one
+  rewritten carrier — the whole PTC contradiction in two lines. It is also the highest-value
+  per-character edit this plugin has ever shipped on a PTC box: those sections do not merely
+  cost tokens, they actively argue with the 180-char rule above them (43:1 measured) and
+  every argument they win is an `UNKNOWN_TOOL`.
+- Check the names before you trust the saving. `context:file-reference` is the section name;
+  `file-reference` is what you would have guessed, and a guessed name is a silent no-op that
+  looks like a win in the diff. The plugin warns and prints the section names the assembly
+  really serves, so boot once and read the log. Names built as `tool:${toolName}` are worth
+  a glob for the same reason.
+
+`contextText` is the one to reach for last. The runtime-context snapshot re-renders when a
+policy changes (sandbox mode, approval answers), so prose you write for today's policy
+freezes yesterday's into every later prompt. The harnesses' own wording is short already;
+if you still override it, override the constant sentences and keep the values.
 
 ## How it works
 
@@ -434,6 +521,19 @@ matrix without any install, and the full suite against the published harness pac
 - The note appended under a slimmed section is a fixed 457 characters. It pays for itself
   with the second slimmed tool; `sdkSlimMarker: false` removes it for a model that has
   already internalised the layout.
+- PTC detection reads the assembly, and on dsh 0.2 an executor-owned `tools[]` never appears
+  in it. The rule is therefore "the SDK section is served and no other callable name is":
+  on 0.2 that means any assembly served alongside a `tools:sdk` section counts as PTC, which
+  is what a PTC executor serves and nothing else does. PTC *with* `executor: wrap` is out of
+  scope either way — `mountExecutorShrink` deliberately bails on an executor that owns
+  sections, so the wire shrink stays off and only the section work runs.
+- In PTC mode `drop` removes a *declaration*, not a capability: the tool stays registered, so
+  a model that remembers its name can still `await tools.that_name({...})` from inside
+  `run_code`. What you are cutting is the typed contract it would have read, which is exactly
+  the point for a redundant tool and a bad idea for one the model needs.
+- The PTC prose keys are per section name. Names the harness builds as `tool:${toolName}`
+  (`tool:doc_read`, `tool:subagent`, …) are stable only as long as the tool names are, so
+  prefer a glob there and read the boot warning when a key stops matching.
 - The layout rewrite is a transform over the *renderer's* output: it expects
   `interface ToolArgsMap` with two-space-indented entries. If a future harness renders a
   different shape, `entryBlocks()` finds nothing and the section is served untouched —

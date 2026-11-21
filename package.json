@@ -1,8 +1,8 @@
 {
   "name": "dsh-plugin-toolscode",
-  "version": "0.3.0",
+  "version": "0.5.0",
   "private": true,
-  "description": "Shrink model-facing tool prose for an agent preset: wire tool schemas (descriptions/property prose), MCP server instructions, and — opt-in — the generated PTC SDK declaration section, both its JSDoc prose and (v0.2) the declaration layout of matched tools plus a stubbed ToolOutputMap, cutting prompt bytes while dispatch, validation and presentations keep using the real full definitions. From dsh 0.2 the wire shrink mounts as a wrapper around the tool executor that presents tools[] there.",
+  "description": "Shrink model-facing tool prose for an agent preset: wire tool schemas (descriptions/property prose), MCP server instructions, and — opt-in — the generated PTC SDK declaration section, both its JSDoc prose and (v0.2) the declaration layout of matched tools plus a stubbed ToolOutputMap, cutting prompt bytes while dispatch, validation and presentations keep using the real full definitions. From dsh 0.2 the wire shrink mounts as a wrapper around the tool executor that presents tools[] there. v0.4 also takes redundant tools off the wire (drop) and serves the deployment's own summary in place of a harness-owned prompt paragraph (sectionText/contextText). v0.5 recognises a PTC assembly and repairs the guidance that still promises tool calls PTC forbids (ptcDropSections/ptcSectionText), and drop now also removes those tools' SDK declarations.",
   "license": "MIT",
   "author": {
     "name": "supakiat-debug",
@@ -68,7 +68,7 @@
   },
   "meta": {
     "title": "Toolscode",
-    "description": "Shrinks the model-facing prose of tool schemas, MCP server instructions and PTC SDK declarations at prompt-assembly time, keeping the real definitions for validation and re-attaching them when the model gets an argument rejected."
+    "description": "Shrinks the model-facing prose of tool schemas, MCP server instructions and PTC SDK declarations at prompt-assembly time, drops redundant tools off the wire and off the SDK, replaces harness prompt paragraphs with the deployment's own summary, removes the guidance that promises tool calls PTC forbids, and re-attaches the real definitions when the model gets an argument rejected."
   },
   "dsh": {
     "bundle": {
