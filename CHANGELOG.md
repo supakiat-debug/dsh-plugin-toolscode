@@ -98,12 +98,29 @@ source, not out of documentation prose.
   predictable across harnesses, because level-aware nesting would make one config
   key mean different things in two harnesses that structure their prompts
   differently.
+- The pi report tool joined an array containing `null` for its conditional lines, so
+  a session without codemode printed the literal word `null` to the model — and the
+  assertions around it used regexes that matched straight past the line. The join
+  filters, and the test now counts the printed lines.
+- `docsCap: <number>` ignored its own budget and wrote a fixed sentence; the
+  replacement is capped like everything else, with the `toolscode:` marker first so
+  a small cap cannot amputate the only part a reader has to attribute.
 
 ### Changed
 
+- **`test:unit` is gone, and the reason is a CI crash, not tidiness.** The script
+  named `test:unit` had, since before this release, run the *pure* sdk-slim suite —
+  the tests that need no dsh — which is why the no-install CI job could call it.
+  Making `test:unit` mean `test/unit.test.mjs` (what the name suggests) turned that
+  job into `Error: @deepseek-ai/dsh not found`, because that file imports cordis
+  from a real install and rightly refuses to load without one. The scripts are now
+  `test:pure` (wire + sdk-slim + pi, no harness) and `test:integration` (the real
+  thing), and the CI job calls the first by name.
+
 - `scripts.test` runs the pi suite too (82 tests: 37 integration, 18 wire, 13
-  sdk-slim, 14 pi), plus `test:pi`, `test:hermes`, `test:parity`. `files` ships
-  `test/fixtures` so those tests can run from an installed copy.
+  sdk-slim, 14 pi), plus `test:pure`, `test:integration`, `test:pi`, `test:hermes`,
+  `test:parity`. `files` ships `test/fixtures` so those tests can run from an
+  installed copy.
 - All three dsh peers are `peerDependenciesMeta.optional`: the pi and Hermes
   adapters import neither cordis nor `dsh-tools`, and a package manager warning
   about a missing peer the plugin does not need is a lie about a dependency.

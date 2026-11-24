@@ -85,7 +85,8 @@
   },
   "scripts": {
     "test": "node --test test/wire.test.mjs test/unit.test.mjs test/sdk-slim.test.mjs test/pi.test.mjs",
-    "test:unit": "node --test test/unit.test.mjs",
+    "test:pure": "node --test test/wire.test.mjs test/sdk-slim.test.mjs test/pi.test.mjs",
+    "test:integration": "node --test test/unit.test.mjs",
     "test:wire": "node --test test/wire.test.mjs",
     "test:sdk": "node --test test/sdk-slim.test.mjs",
     "test:pi": "node --test test/pi.test.mjs",

@@ -526,7 +526,8 @@ dependencies.
 ~~~sh
 npm test           # 82 tests: 37 integration against a real cordis universe (4 skip on 0.1),
                    # 18 wire, 13 pure sdk-slim, 14 pi — no dsh needed for the last three
-npm run test:unit  # the integration suite alone, against a real cordis universe
+npm run test:pure  # wire + sdk-slim + pi only — the three suites that need no harness
+npm run test:integration # the integration suite alone, against a real cordis universe
 npm run test:pi    # the pi adapter against a stubbed ExtensionAPI
 npm run test:hermes # the Hermes adapter + its Python port, standard library only
 npm run test:parity # JS and Python shrinkers over the same payloads, compared as text

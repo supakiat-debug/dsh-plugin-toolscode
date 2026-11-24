@@ -9,9 +9,14 @@ permissions:
   contents: read
 
 jobs:
-  unit:
-    # lib/ and test/sdk-slim.test.mjs are dependency-free: pure text transforms,
-    # so this job is the honest gate — no registry, no harness install.
+  pure:
+    # The honest gate: no registry, no harness install, nothing but Node. This is
+    # why the scripts are named test:pure and test:integration rather than one
+    # of them being called "unit": until v0.6 the script named test:unit ran the
+    # PURE sdk-slim suite, so this job's `npm run test:unit` quietly meant "run
+    # the tests that need no dsh". Renaming the script to its real target while
+    # leaving this line alone turned the job into a dsh-not-found crash, which is
+    # the whole reason the two names are now unambiguous.
     name: pure tests (Node ${{ matrix.node }})
     runs-on: ubuntu-latest
     strategy:
@@ -24,13 +29,12 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node }}
-      - run: npm run test:unit
-      # v0.6 added three suites that need nothing but Node: the wire shrink over four
-      # pinned provider payloads, the pi adapter over a stubbed ExtensionAPI, and the
-      # sdk-slim text transforms. They run here as well as in the harness job, so a
-      # regression is caught on the oldest supported Node too.
-      - name: Wire, pi and sdk-slim suites (no harness needed)
-        run: node --test test/wire.test.mjs test/sdk-slim.test.mjs test/pi.test.mjs
+      # The suites that need nothing but Node: the wire shrink over four pinned
+      # provider payloads, the pi adapter over a stubbed ExtensionAPI, and the
+      # sdk-slim text transforms. The integration suite is the `harness` job's
+      # job — it imports cordis from a real dsh install and refuses to load
+      # without one, so running it here would only prove that nothing is installed.
+      - run: npm run test:pure
 
   parity:
     # lib/wire.js and adapters/hermes/toolscode/toolscode_core.py are the same program

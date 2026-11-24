@@ -50,7 +50,7 @@ const DSH = [
   npmRootG && join(npmRootG, '@deepseek-ai', 'dsh'),
   ...guessed.filter(Boolean).map((root) => join(root, '@deepseek-ai', 'dsh')),
 ].filter(Boolean).find(usable)
-if (!DSH) throw new Error('dsh-plugin-toolscode tests: @deepseek-ai/dsh not found — set DSH_ROOT to its install directory')
+if (!DSH) throw new Error('dsh-plugin-toolscode tests: @deepseek-ai/dsh not found — set DSH_ROOT to its install directory (this is the integration suite; `npm run test:pure` is the one that needs no harness)')
 const req = createRequire(join(DSH, 'lib/bin.js'))
 
 const { Context } = req('@deepseek-ai/cordis')
