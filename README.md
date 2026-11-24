@@ -217,6 +217,73 @@ plugins list renders, localized), `icon.svg` the tile icon, and `package.json` e
 `./locale/*.json` and `./package.json` so the host can resolve them through the package
 export map. Without them the row still lists, under the raw package name.
 
+## Other harnesses: pi and Hermes
+
+The shrink is not a dsh concept with dsh plumbing bolted on. Since v0.6 the part
+that decides what to cut lives in [`lib/wire.js`](./lib/wire.js), which walks a
+*provider request payload* rather than a section registry, and knows the three
+shapes a payload comes in (OpenAI chat, OpenAI Responses, Anthropic — plus where a
+system prompt hides: a `role: system` message, an `instructions` field, or a
+`system` list of text blocks). Everything below is that one module wearing a
+harness's clothes; `npm run test:parity` proves the Python port still produces
+byte-identical output.
+
+### pi (`@earendil-works/pi-coding-agent`)
+
+`package.json` advertises [`extensions/toolscode.mjs`](./extensions/toolscode.mjs)
+under `pi.extensions`, so `pi install github:supakiat-debug/dsh-plugin-toolscode`
+picks it up, and pi loads extensions with `jiti` — no build step, and no
+`@earendil-works/pi-*` import in the file, because pi provides those and a plugin
+that imports its host's internals breaks when they move.
+
+pi has no pre-request hook that can replace `tools[]`, so the adapter uses the two
+levers it does have, and they are better ones for being narrower:
+
+- **`prepareLoadout` on a carrier tool** rewrites declarations before the provider
+  sees them. The carrier is a no-argument `toolscode` tool whose `execute` prints
+  what the shrink did — declarations before/after, which tools shrank, what the
+  prompt inputs cost — because a shrink you cannot interrogate is a shrink you
+  cannot tune.
+- **`before_agent_start`** caps the *prompt inputs* — `toolSnippets[name]`,
+  `toolGuidelines[name]`, `promptGuidelines[]` — which pi turns into its `tools`
+  and `rules` system sections, and which are where the real per-tool prose sits.
+  `sections.docs` can be replaced, or set to a single space to blank it: pi copies
+  a custom section only `if (content)`, so `''` is silently ignored and a space is
+  the only way to remove a block you do not want.
+- **`before_provider_request`** is available for a raw payload rewrite and is wired
+  to `shrinkWirePayload` behind `wire: true`, off by default: it is the fallback,
+  not the plan, and a rewrite there is invisible to `ctx.getSystemPrompt()`.
+
+Config: `~/.pi/agent/toolscode.json`, then `./.pi/toolscode.json`, then
+`TOOLSCODE_ENABLED` / `TOOLSCODE_DROP` / `TOOLSCODE_DESCRIPTION_CAP` / `TOOLSCODE_WIRE`.
+
+Two pi-specific rules the adapter follows, both measured rather than assumed:
+
+- **It writes no descriptions when `codemode` is in the loadout.** pi's PTC is
+  `codemode`, and its own `prepareLoadout` rewrites every callable tool's
+  description to append the `tools.x(args)` call form. pi collects hooks only from
+  active tools and merges them into one `descriptions` map, last writer wins — so
+  two shrinkers in one loadout is a coin toss on which prose the model reads.
+  `drop` still applies (hiding a declaration is not prose), and the carrier reports
+  `skipped for codemode; use codemode.inlineBudget` because pi's own knob is the
+  right one there.
+- **A tool cannot be unregistered, only hidden**, so `drop` maps to
+  `hiddenDeclarations` and the tool stays callable by anything that already knows
+  it — same honesty rule as `drop` on dsh, which is why the report names every
+  removal.
+
+### Hermes Agent (`hermes-agent`)
+
+[`adapters/hermes/`](./adapters/hermes/README.md) is the same shrink as an
+`llm_request` middleware — the only hook in Hermes whose return value replaces the
+request — plus a standard-library Python port of `lib/wire.js` and
+`lib/shrink.js`. Read that directory before turning it on: Hermes already defers
+its own tool catalog (`tools.tool_search`) and caps its skill index
+(`skills.index_desc_limit`), and the descriptions of its `tool_search` bridge tools
+and `execute_code` embed a *generated tool list*, which is why they are excluded by
+default. The win on Hermes is the prose Hermes does not manage: MCP tools,
+third-party plugin tools, your own `register_tool` definitions.
+
 ## Configure
 
 Patched in the profile's `cordis.patch.yml`, over the row the bundle inserted. Every key
@@ -457,9 +524,20 @@ dependencies.
 ## Tests
 
 ~~~sh
-npm test          # 41 tests: 28 integration against a real cordis universe + 13 pure
-npm run test:unit # 13 pure sdk-slim tests — no dependencies at all
+npm test           # 82 tests: 37 integration against a real cordis universe (4 skip on 0.1),
+                   # 18 wire, 13 pure sdk-slim, 14 pi — no dsh needed for the last three
+npm run test:unit  # the integration suite alone, against a real cordis universe
+npm run test:pi    # the pi adapter against a stubbed ExtensionAPI
+npm run test:hermes # the Hermes adapter + its Python port, standard library only
+npm run test:parity # JS and Python shrinkers over the same payloads, compared as text
 ~~~
+
+The wire and pi suites need no harness at all: the wire suite drives
+`shrinkWirePayload` with four pinned provider payloads, the pi suite hands the
+extension a stubbed `ExtensionAPI` and a stubbed `ToolLoadout` and asserts the
+changes it returns — including the two rules that only exist because of how pi
+behaves (no descriptions written when `codemode` is in the loadout; a `drop` that
+still hides declarations in that case).
 
 The integration suite mounts the plugin into a real cordis universe (real `SystemPrompt`,
 `ToolRuntime`, `dsh-scope` chains) on the **production topology**: tools registered in the
@@ -476,10 +554,11 @@ real contract; `sdkSlimHeal: false` stops the disclosure), and the executor wrap
 shrunk presentation over an untouched registry, byte-stable `describe()`, a section-owning
 executor declined, a missing executor survived, a second row in one scope left to the first.
 
-The same 28 tests cover **both** harness contracts, feature-detected rather than
-version-parsed: 0.1 shrinks through the assemble carrier, 0.2 through the executor, and every
-wire assertion in between is identical. Only the three cases that exist solely to pin the
-executor contract skip on 0.1, with a printed reason.
+The same integration suite covers **both** dsh harness contracts, feature-detected
+rather than version-parsed: 0.1 shrinks through the assemble carrier, 0.2 through
+the executor, and every wire assertion in between is identical. Only the three
+cases that exist solely to pin the executor contract skip on 0.1, with a printed
+reason (four skips in total on the pinned install).
 
 The integration job runs the suite twice: against the pinned harness version this plugin
 is deployed against, and against the `latest` dist-tag. Both are hard gates, and both are
@@ -545,6 +624,27 @@ matrix without any install, and the full suite against the published harness pac
   fail-safe by construction, and `test/fixtures/sdk-sample.txt` pins the current shape.
 - Config lives in the profile patch, so it is read at boot: changing a cap means
   restarting the harness, and the first assembly after that may still be unshrunk.
+- On pi the adapter caps only what pi lets it cap. There is no setter for a tool's
+  `parameters`, or for a single property's description, outside re-registering under
+  the same name — so `nestedDescriptionCap` does nothing on the loadout path, and
+  per-property prose only shrinks with `wire: true`, which rewrites the raw payload
+  and is therefore invisible to `ctx.getSystemPrompt()`. `prepareLoadout` also sees
+  `loadout.declared` *before* pi patches it, so a carrier cannot read what another
+  hook wrote; that is why the codemode rule is "write nothing" rather than "merge".
+- On Hermes the win is narrower than on dsh, on purpose: `tools.tool_search` already
+  defers tools with a real fetch-back path, `skills.index_desc_limit` already caps
+  the skill index, and the `tool_search` bridge tools plus `execute_code` embed a
+  generated tool list in their own descriptions, so they are excluded by default.
+  What is left to shrink is MCP tools, third-party plugin tools, and your own
+  `register_tool` definitions.
+- The two implementations count characters differently: JavaScript counts UTF-16
+  code units, Python counts code points, so a cap applied to emoji-heavy prose can
+  land one character apart on the two sides. Tool descriptions are not emoji-heavy,
+  and the parity run over the shared fixture is byte-identical.
+- No pi or Hermes numbers here are token counts. Neither harness was run live (no
+  API keys), so everything in this repository is a character count, and the fixture's
+  tool universe is written to be representative rather than extracted from either
+  harness. `tools/measure.mjs` still measures real dsh session logs.
 
 ## Repository layout
 
@@ -552,10 +652,20 @@ matrix without any install, and the full suite against the published harness pac
 lib/index.js               plugin: config validation, two waterfall listeners, self-heal,
                            the dsh 0.2 executor wrapper
 lib/shrink.js              pure wire / instruction / JSDoc prose shrinkers  (…/shrink)
+lib/wire.js                harness-neutral payload shrink: three provider shapes,
+                           five places a system prompt hides             (…/wire)
 lib/sdk-slim.js            pure declaration slimming + ToolOutputMap stub    (…/sdk-slim)
+extensions/toolscode.mjs   pi adapter: prepareLoadout + before_agent_start (+ wire opt-in)
+adapters/hermes/           Hermes adapter: llm_request middleware + the Python port of
+                           lib/{shrink,wire}.js, stdlib only, with its own README
 tools/measure.mjs          session-log measurer, no dependencies
+tools/parity.mjs|.py       cross-language parity: same payloads, both shrinkers, diffed
 test/unit.test.mjs         integration suite (real cordis universe, production topology)
+test/wire.test.mjs         pure suite over four pinned provider payloads
+test/pi.test.mjs           pi adapter against a stubbed ExtensionAPI
 test/sdk-slim.test.mjs     pure suite — text in, text out
+adapters/hermes/test_wire.py  the same fixture, asserted in Python
+test/fixtures/wire-payloads.json  the contract both languages pin their strings to
 test/fixtures/sdk-sample.txt  trimmed real tools:sdk section the structural contract is pinned to
 locale/*.json, icon.svg    metadata rendered by the plugins page
 cordis.patch.yml           the row the bundle inserts
@@ -579,6 +689,12 @@ plugin is safe to point at a 333-tool prompt.
   mounted above the plugin row (`@deepseek-ai/dsh-tool-executor-native` or your own). The
   wire and instruction shrinks work on any preset; the `sdk*` keys only apply to presets that
   present tools as a generated SDK (PTC mode), where `executor` stays `'off'`.
+- For the other harnesses: pi `@earendil-works/pi-coding-agent` >= 1.6 (Node >= 22.19) — the
+  adapter imports nothing from pi, it only implements the `ExtensionAPI` contract, so it keeps
+  working across pi releases that move internals. Hermes Agent (`hermes-agent`) wants Python
+  `>=3.11,<3.14`; the port is standard library only, and its tests pass on 3.14 — a version
+  Hermes itself cannot be installed onto, which is exactly why they are written that way.
+  Neither adapter needs the dsh peers; all three are marked optional.
 
 ## License
 

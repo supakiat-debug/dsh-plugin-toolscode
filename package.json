@@ -1,8 +1,8 @@
 {
   "name": "dsh-plugin-toolscode",
-  "version": "0.5.1",
+  "version": "0.6.0",
   "private": true,
-  "description": "Shrink model-facing tool prose for an agent preset: wire tool schemas (descriptions/property prose), MCP server instructions, and — opt-in — the generated PTC SDK declaration section, both its JSDoc prose and (v0.2) the declaration layout of matched tools plus a stubbed ToolOutputMap, cutting prompt bytes while dispatch, validation and presentations keep using the real full definitions. From dsh 0.2 the wire shrink mounts as a wrapper around the tool executor that presents tools[] there. v0.4 also takes redundant tools off the wire (drop) and serves the deployment's own summary in place of a harness-owned prompt paragraph (sectionText/contextText). v0.5 recognises a PTC assembly and repairs the guidance that still promises tool calls PTC forbids (ptcDropSections/ptcSectionText), and drop now also removes those tools' SDK declarations.",
+  "description": "Shrink model-facing tool prose for an agent preset: wire tool schemas (descriptions/property prose), MCP server instructions, and — opt-in — the generated PTC SDK declaration section, both its JSDoc prose and (v0.2) the declaration layout of matched tools plus a stubbed ToolOutputMap, cutting prompt bytes while dispatch, validation and presentations keep using the real full definitions. From dsh 0.2 the wire shrink mounts as a wrapper around the tool executor that presents tools[] there. v0.4 also takes redundant tools off the wire (drop) and serves the deployment's own summary in place of a harness-owned prompt paragraph (sectionText/contextText). v0.5 recognises a PTC assembly and repairs the guidance that still promises tool calls PTC forbids (ptcDropSections/ptcSectionText), and drop now also removes those tools' SDK declarations. v0.6 lifts the wire shrink into a harness-neutral core (lib/wire.js) with adapters for two more harnesses: pi (extensions/toolscode.mjs, via prepareLoadout + before_agent_start) and Hermes Agent (adapters/hermes, via an llm_request middleware), the latter a standard-library Python port proven byte-identical to the JavaScript by tools/parity.mjs.",
   "license": "MIT",
   "author": {
     "name": "supakiat-debug",
@@ -23,13 +23,22 @@
     ".": "./lib/index.js",
     "./shrink": "./lib/shrink.js",
     "./sdk-slim": "./lib/sdk-slim.js",
+    "./wire": "./lib/wire.js",
     "./locale/*.json": "./locale/*.json",
     "./package.json": "./package.json"
+  },
+  "pi": {
+    "extensions": [
+      "./extensions/toolscode.mjs"
+    ]
   },
   "files": [
     "lib",
     "tools",
     "locale",
+    "extensions",
+    "adapters",
+    "test/fixtures",
     "icon.svg",
     "cordis.patch.yml",
     "examples",
@@ -44,6 +53,9 @@
     "plugin",
     "bundle",
     "dsh-plugin",
+    "pi-package",
+    "pi",
+    "hermes-agent",
     "tool-schema",
     "prompt-optimization",
     "prompt-cache",
@@ -60,9 +72,25 @@
     "@deepseek-ai/dsh-system-prompt": ">=0.1.0-rc.6",
     "@deepseek-ai/dsh-tools": ">=0.1.0-rc.6"
   },
+  "peerDependenciesMeta": {
+    "@deepseek-ai/cordis": {
+      "optional": true
+    },
+    "@deepseek-ai/dsh-system-prompt": {
+      "optional": true
+    },
+    "@deepseek-ai/dsh-tools": {
+      "optional": true
+    }
+  },
   "scripts": {
-    "test": "node --test test/unit.test.mjs test/sdk-slim.test.mjs",
-    "test:unit": "node --test test/sdk-slim.test.mjs",
+    "test": "node --test test/wire.test.mjs test/unit.test.mjs test/sdk-slim.test.mjs test/pi.test.mjs",
+    "test:unit": "node --test test/unit.test.mjs",
+    "test:wire": "node --test test/wire.test.mjs",
+    "test:sdk": "node --test test/sdk-slim.test.mjs",
+    "test:pi": "node --test test/pi.test.mjs",
+    "test:hermes": "python adapters/hermes/test_wire.py",
+    "test:parity": "node tools/parity.mjs",
     "check": "npm test",
     "measure": "node tools/measure.mjs"
   },

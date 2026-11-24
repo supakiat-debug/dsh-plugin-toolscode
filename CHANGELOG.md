@@ -4,6 +4,120 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.0] - 2026-11-25
+
+The shrink was a dsh plugin with dsh plumbing. This lifts the part that decides
+what to cut into a module that walks a **provider request payload** instead of a
+section registry, and mounts it on two more harnesses: **pi**
+(`@earendil-works/pi-coding-agent`) and **Hermes Agent** (`hermes-agent`). Every
+harness-specific rule the two adapters follow was read out of the installed
+source, not out of documentation prose.
+
+### Added
+
+- `lib/wire.js` — `shrinkWirePayload(payload, config)`, exported as `…/wire`. It
+  detects the shape from where a tool keeps its fields (`tools[].function` →
+  OpenAI chat, flat with `input_schema` → Anthropic, flat with `parameters` →
+  OpenAI Responses) and reads the system prompt out of whichever of five homes it
+  is in: a `system` string, a `system` list of text blocks, `instructions`, a
+  `role: system` message's string content, or its list of parts. Same two
+  contracts as the section shrink — pure and byte-stable (a rewriter that wobbled
+  would break prompt caching, which is the point), and never invent (a
+  `systemSections` key matching nothing lands in `report.systemMissing`, never in
+  the prompt). `systemSections` is what a payload has instead of `sectionText`: a
+  payload has no section registry, only text, so headings are matched by glob and
+  `""` removes a block. `systemCap` is the blunt tail cut, with a marker.
+- `test/fixtures/wire-payloads.json` + `test/wire.test.mjs` — one tool universe in
+  four shapes, with the truncated strings pinned as exact text (`"Locate files by
+  glob pattern. Searches recursively from the…"`) because a count can be satisfied
+  by shrinking the wrong thing. 18 tests.
+- `extensions/toolscode.mjs` — the pi adapter, advertised under `pi.extensions` so
+  `pi install github:supakiat-debug/dsh-plugin-toolscode` finds it. pi has no
+  pre-request hook that can replace `tools[]`, so it uses the two it does have:
+  `prepareLoadout` on a carrier tool (a no-argument `toolscode` tool whose
+  `execute` prints what the shrink cost, because a shrink you cannot interrogate
+  is a shrink you cannot tune), and `before_agent_start`, which caps pi's *prompt
+  inputs* — `toolSnippets`, `toolGuidelines`, `promptGuidelines` — the ones pi
+  turns into its `tools` and `rules` sections. `before_provider_request` is wired
+  to `shrinkWirePayload` behind `wire: false`. 14 tests against a stubbed
+  `ExtensionAPI` and `ToolLoadout`, no pi install needed.
+- `adapters/hermes/` — a Hermes dir plugin (`plugin.yaml` + `__init__.py`) that
+  registers the one hook whose return value replaces the request,
+  `ctx.register_middleware("llm_request", …)`, and returns
+  `{"request", "source": "toolscode", "reason"}` so the rewrite shows up in Hermes'
+  middleware trace. `toolscode_core.py` is a standard-library port of
+  `lib/shrink.js` + `lib/wire.js`; `test_wire.py` asserts the same fixture in
+  Python (26 tests) and `adapters/hermes/README.md` covers install, config, and
+  what Hermes already does better itself.
+- `tools/parity.mjs` + `tools/parity.py` (`npm run test:parity`) — each side shrinks
+  every fixture payload from its own copy of the fixture and writes its own output;
+  the Node script diffs them as text. Currently **4 payloads, 218 lines, identical**.
+  Exits 3, not 1, when no Python interpreter exists: a missing interpreter is a
+  skipped check, not a broken build.
+
+### Rules the adapters follow because the harnesses were read, not guessed
+
+- **pi: no descriptions are written when `codemode` is in the loadout.** pi's PTC
+  is `codemode`, and its own `prepareLoadout` rewrites every callable tool's
+  description to append the `tools.x(args)` call form; pi collects those hooks only
+  from *active* tools and merges them into a single `descriptions` map, last writer
+  wins. Two shrinkers in one loadout is a coin toss on which prose the model reads,
+  and `loadout.declared` is pre-patch, so a carrier cannot even see what codemode
+  wrote, let alone compose it. `drop` still hides declarations (hiding is not
+  prose), and the carrier reports `skipped for codemode; use codemode.inlineBudget`.
+- **pi: a section can be overwritten but not blanked** — pi copies a custom section
+  only `if (content)`, so `docsCap: 0` writes a single space, not `''`.
+- **Hermes: never duplicate what the harness already collapses.** `tools.tool_search`
+  defers tools with a real fetch-back path, `skills.index_desc_limit` caps the skill
+  index, compression prunes turns, prompt caching is automatic. And the
+  `tool_search` / `tool_describe` / `tool_call` bridge tools plus `execute_code`
+  carry a *generated tool list inside their own description*, so they are excluded
+  by default — cutting one at a character budget would not save prose, it would
+  leave the model holding half a list of the tools it was told to reach for.
+- **Hermes: nothing is mutated.** `model_tools.get_tool_definitions` memoizes and
+  hands the same dicts to every request; the core copies every container it changes,
+  and rewrites a block while keeping its siblings — including `cache_control`, so a
+  shrink does not cost the Anthropic cache write it was supposed to pay for.
+- **Hermes: `kind: standalone` is declared in `plugin.yaml`**, because when `kind`
+  is absent Hermes reads the first 8 KB of `__init__.py` and coerces a plugin that
+  mentions `register_provider` or `MemoryProvider` into another kind. Pinning it
+  beats trusting a substring test over a docstring.
+
+### Fixed
+
+- `writeSystem()` had no `instructions` branch, so any OpenAI Responses payload —
+  which keeps its system prompt in `instructions` — threw `undefined is not
+  iterable` the moment a `systemSections` key matched.
+- A **named** hosted tool (`{"type": "web_search_20250305", "name": "web_search"}`,
+  which is how Anthropic sends its server tools) had an empty `description` written
+  onto it and was reported as shrunk: `readTool` saw the name and never checked
+  whether there was any prose or schema to cap. Such entries now pass through
+  byte-identical. Both languages have the assertion.
+- `headingBlocks` documented level-aware nesting it did not implement. The
+  behaviour is kept and the doc corrected: splitting at *any* heading level is more
+  predictable across harnesses, because level-aware nesting would make one config
+  key mean different things in two harnesses that structure their prompts
+  differently.
+
+### Changed
+
+- `scripts.test` runs the pi suite too (82 tests: 37 integration, 18 wire, 13
+  sdk-slim, 14 pi), plus `test:pi`, `test:hermes`, `test:parity`. `files` ships
+  `test/fixtures` so those tests can run from an installed copy.
+- All three dsh peers are `peerDependenciesMeta.optional`: the pi and Hermes
+  adapters import neither cordis nor `dsh-tools`, and a package manager warning
+  about a missing peer the plugin does not need is a lie about a dependency.
+
+### Not done here
+
+Neither pi nor Hermes was run live — no API keys — so this release contains no
+token claims for either harness, only character counts and pinned bytes. Whether
+every Hermes transport builds its payload through the same path (the codex
+Responses preflight runs before middleware; a MoA fan-out is several requests,
+each shrunk once) is documented as unverified in the adapter README.
+
+
+
 ## [0.5.1] - 2026-11-22
 
 CI caught a real bug on the newer harness: a **native** dsh 0.2 deployment that serves the SDK

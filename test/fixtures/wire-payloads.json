@@ -1,0 +1,72 @@
+{
+  "comment": "One tool universe, four provider shapes. Shared by test/wire.test.mjs and adapters/hermes/test_wire.py so the JS and Python shrinkers cannot drift. Long descriptions are the point: they must exceed the caps the tests assert on.",
+  "caps": {
+    "descriptionCap": 60,
+    "nestedDescriptionCap": 40,
+    "minChars": 0
+  },
+  "longDescription": "Locate files by glob pattern. Searches recursively from the given root, honours .gitignore by default, skips hidden directories unless asked, follows symlinks only when the follow flag is set, and returns results ordered by last modification time so the freshest file comes first.",
+  "longNested": "Directory to start the search from. Relative paths resolve against the session workspace root, and a trailing slash means the directory itself is matched rather than its contents.",
+  "payloads": {
+    "openai-chat": {
+      "model": "deepseek-v4",
+      "messages": [
+        { "role": "system", "content": "Lead line about the agent.\n\n## Personality\n\nYou are terse and direct, and you never pad an answer with a preamble that repeats the question back.\n\n## Tools\n\nCall tools by name with JSON arguments. Prefer the narrowest tool that answers the question, and read before you edit.\n\n## Environment\n\nWorking directory is the session workspace." }
+      ],
+      "tools": [
+        { "type": "function", "function": { "name": "find_files", "description": "Locate files by glob pattern. Searches recursively from the given root, honours .gitignore by default, skips hidden directories unless asked, follows symlinks only when the follow flag is set, and returns results ordered by last modification time so the freshest file comes first.", "parameters": { "type": "object", "properties": { "root": { "type": "string", "description": "Directory to start the search from. Relative paths resolve against the session workspace root, and a trailing slash means the directory itself is matched rather than its contents." }, "limit": { "type": "number", "description": "Maximum paths to return." } } } } },
+        { "type": "function", "function": { "name": "read", "description": "Read a UTF-8 text file and return line-numbered content.", "parameters": { "type": "object", "properties": { "file_path": { "type": "string", "description": "Path to read." } } } } },
+        { "type": "function", "function": { "name": "secret_tool", "description": "A tool the shrinker must be told to leave alone entirely, with a description long enough that a bare character cap would otherwise have cut it down to a stub and reported nothing suspicious about doing so.", "parameters": { "type": "object", "properties": { "q": { "type": "string", "description": "Query string." } } } } }
+      ]
+    },
+    "openai-responses": {
+      "model": "gpt-5",
+      "input": "hi",
+      "instructions": "Lead line about the agent.\n\n## Personality\n\nYou are terse and direct, and you never pad an answer with a preamble that repeats the question back.\n\n## Tools\n\nCall tools by name with JSON arguments. Prefer the narrowest tool that answers the question, and read before you edit.",
+      "tools": [
+        { "type": "function", "name": "find_files", "description": "Locate files by glob pattern. Searches recursively from the given root, honours .gitignore by default, skips hidden directories unless asked, follows symlinks only when the follow flag is set, and returns results ordered by last modification time so the freshest file comes first.", "parameters": { "type": "object", "properties": { "root": { "type": "string", "description": "Directory to start the search from. Relative paths resolve against the session workspace root, and a trailing slash means the directory itself is matched rather than its contents." } } } }
+      ]
+    },
+    "anthropic": {
+      "model": "claude",
+      "max_tokens": 4096,
+      "system": [
+        { "type": "text", "text": "Lead line about the agent.\n\n## Personality\n\nYou are terse and direct, and you never pad an answer with a preamble that repeats the question back.\n\n## Tools\n\nCall tools by name with JSON arguments. Prefer the narrowest tool that answers the question, and read before you edit." },
+        { "type": "text", "text": "Second block, must stay untouched." }
+      ],
+      "tools": [
+        { "name": "find_files", "description": "Locate files by glob pattern. Searches recursively from the given root, honours .gitignore by default, skips hidden directories unless asked, follows symlinks only when the follow flag is set, and returns results ordered by last modification time so the freshest file comes first.", "input_schema": { "type": "object", "properties": { "root": { "type": "string", "description": "Directory to start the search from. Relative paths resolve against the session workspace root, and a trailing slash means the directory itself is matched rather than its contents." } } } }
+      ]
+    },
+    "hermes-kwargs": {
+      "model": "hermes-4",
+      "messages": [
+        { "role": "system", "content": "Lead line about the agent.\n\n## Personality\n\nYou are terse and direct, and you never pad an answer with a preamble that repeats the question back.\n\n## Tools\n\nCall tools by name with JSON arguments. Prefer the narrowest tool that answers the question, and read before you edit." },
+        { "role": "user", "content": "hello" }
+      ],
+      "tools": [
+        { "type": "function", "function": { "name": "search_files", "description": "Locate files by glob pattern. Searches recursively from the given root, honours .gitignore by default, skips hidden directories unless asked, follows symlinks only when the follow flag is set, and returns results ordered by last modification time so the freshest file comes first.", "parameters": { "type": "object", "properties": { "root": { "type": "string", "description": "Directory to start the search from. Relative paths resolve against the session workspace root, and a trailing slash means the directory itself is matched rather than its contents." } } } } }
+      ]
+    }
+  },
+  "expect": {
+    "comment": "The contract both implementations must satisfy: test/wire.test.mjs (JS) and adapters/hermes/test_wire.py (the Python port) run the same payload through their own shrinker with the caps above plus exclude ['secret_*'] and systemSections {'Personality': ''}. Exact strings, not counts - a count can be met by shrinking the wrong thing.",
+    "findFilesDescription": "Locate files by glob pattern. Searches recursively from the\u2026",
+    "rootDescription": "Directory to start the search from.\u2026",
+    "secretDescriptionLength": 205,
+    "longDescriptionLength": 280,
+    "shapes": {
+      "openai-chat": "openai-chat",
+      "openai-responses": "openai-responses",
+      "anthropic": "anthropic",
+      "hermes-kwargs": "openai-chat"
+    },
+    "shrunk": {
+      "openai-chat": ["find_files"],
+      "openai-responses": ["find_files"],
+      "anthropic": ["find_files"],
+      "hermes-kwargs": ["search_files"]
+    },
+    "toolCount": { "openai-chat": 3, "openai-responses": 1, "anthropic": 1, "hermes-kwargs": 1 }
+  }
+}

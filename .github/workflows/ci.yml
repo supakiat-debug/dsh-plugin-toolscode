@@ -25,6 +25,34 @@ jobs:
         with:
           node-version: ${{ matrix.node }}
       - run: npm run test:unit
+      # v0.6 added three suites that need nothing but Node: the wire shrink over four
+      # pinned provider payloads, the pi adapter over a stubbed ExtensionAPI, and the
+      # sdk-slim text transforms. They run here as well as in the harness job, so a
+      # regression is caught on the oldest supported Node too.
+      - name: Wire, pi and sdk-slim suites (no harness needed)
+        run: node --test test/wire.test.mjs test/sdk-slim.test.mjs test/pi.test.mjs
+
+  parity:
+    # lib/wire.js and adapters/hermes/toolscode/toolscode_core.py are the same program
+    # written twice, for the JavaScript harnesses and the Python one. The shared
+    # fixture pins a few truncated strings in each language; this job runs every
+    # payload through both shrinkers and diffs the whole output, which is the only
+    # check that catches the drift those pins miss — a moved key, a different word
+    # boundary, a tool reported as shrunk on one side only.
+    name: JS and Python shrinkers agree
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.x'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Hermes adapter tests (standard library only)
+        run: python adapters/hermes/test_wire.py
+      - name: Cross-language parity
+        run: npm run test:parity
 
   harness:
     # Integration suite: mounts the plugin into a real cordis universe (real

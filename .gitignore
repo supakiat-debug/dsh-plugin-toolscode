@@ -18,3 +18,9 @@ Thumbs.db
 scratch/
 tmp/
 *.captured.txt
+
+# the Hermes adapter is Python (adapters/hermes): bytecode and test caches,
+# which appear the moment anyone runs test_wire.py from a clone
+__pycache__/
+*.py[cod]
+.pytest_cache/

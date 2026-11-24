@@ -1,0 +1,10 @@
+name: toolscode
+# Declared so Hermes skips its kind heuristic: when `kind` is absent it reads the
+# first 8 KB of __init__.py and coerces a plugin mentioning register_provider or
+# MemoryProvider into model-provider / exclusive. This plugin registers one
+# middleware and nothing else, which is `standalone` — worth pinning rather than
+# trusting a substring test over someone else's docstring.
+kind: standalone
+version: "0.6.0"
+description: "Shrink the model-facing prose of tool schemas in the request Hermes is about to send: cap each tool description and every property description at a character budget, optionally drop redundant tools off the wire, and optionally replace or remove named system-prompt sections. Deterministic and byte-stable, so the Anthropic prefix cache still hits; the real tool definitions still validate every call. Hermes already collapses its own tool catalog (tools.tool_search) and skill index (skills.index_desc_limit) — this plugin never duplicates that, and leaves the descriptions of the tool_search bridge tools and execute_code alone because those carry a generated tool list, not prose."
+author: "supakiat-debug"
